@@ -1,7 +1,7 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Warrior Control API",
+    "title": "Tubelight Control API",
     "version": "1.0.0",
     "description": "IP and device-gated bootstrap and proxy catalog API for the desktop application."
   },
@@ -333,7 +333,7 @@
           "access_token": {
             "type": "string"
           },
-          "warrior_config": {
+          "tubelight_config": {
             "type": "object",
             "additionalProperties": true
           },
@@ -358,7 +358,7 @@
           "config_version",
           "expires_in",
           "access_token",
-          "warrior_config",
+          "tubelight_config",
           "catalog"
         ]
       },

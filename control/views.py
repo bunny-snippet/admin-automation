@@ -39,6 +39,11 @@ def _normalized_ip(value: Any) -> str:
 
 def observed_client_ip(request: HttpRequest) -> str:
     if settings.TRUST_PROXY_HEADERS:
+        # Railway documents X-Real-IP as the original client address. Keep
+        # X-Forwarded-For as the Render/other reverse-proxy fallback.
+        real_ip = request.META.get("HTTP_X_REAL_IP", "")
+        if real_ip:
+            return _normalized_ip(real_ip)
         forwarded = request.META.get("HTTP_X_FORWARDED_FOR", "")
         if forwarded:
             return _normalized_ip(forwarded.split(",", 1)[0])
@@ -268,7 +273,7 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
             "config_version": client.config_bundle.version,
             "expires_in": settings.BOOTSTRAP_TOKEN_MAX_AGE,
             "access_token": token,
-            "warrior_config": config,
+            "tubelight_config": config,
             "catalog": {"providers": _catalog()},
         }
     )

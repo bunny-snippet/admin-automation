@@ -1,4 +1,4 @@
-# Warrior Control Server
+# Tubelight Control Server
 
 Render-ready Django control API for the desktop app. The current v1.6.1 EXE is
 not modified by this project yet. It will be wired to the deployed URL in the
@@ -44,7 +44,7 @@ $env:DEBUG='1'
 Open `http://127.0.0.1:8000/admin/` and create records in this order:
 
 1. Config bundle: paste a JSON object containing every former
-   `warrior_config.txt` value.
+   `tubelight_config.txt` value.
 2. Client access: whitelist the public IPv4, choose bundle, office name, and
    system number.
 3. Providers: use only public codes such as P1, P2, and so on.
@@ -57,7 +57,7 @@ Example configuration JSON keys:
   "APP_API_KEY": "...",
   "APP_BASE_URL": "http://127.0.0.1:54032",
   "APP_START_URL": "...",
-  "WARRIOR_API_KEY": "..."
+  "TUBELIGHT_API_KEY": "..."
 }
 ```
 
@@ -97,7 +97,7 @@ An existing key/value file can be encrypted into a bundle without printing any
 values:
 
 ```powershell
-python manage.py import_warrior_config C:\secure\warrior_config.txt --name Office --bundle-version 1
+python manage.py import_tubelight_config C:\secure\tubelight_config.txt --name Office --bundle-version 1
 ```
 
 Verify the bundle in admin, then securely delete the plaintext source. Never

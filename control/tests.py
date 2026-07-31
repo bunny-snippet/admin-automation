@@ -20,7 +20,7 @@ class ControlApiTests(TestCase):
         self.bundle.set_payload(
             {
                 "APP_API_KEY": "browser-secret",
-                "WARRIOR_API_KEY": "warrior-secret",
+                "TUBELIGHT_API_KEY": "tubelight-secret",
                 "P1_PASSWORD": "proxy-secret",
             }
         )
@@ -95,9 +95,9 @@ class ControlApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertTrue(payload["allowed"])
-        self.assertEqual(payload["warrior_config"]["OFFICE_NAME"], "1115")
-        self.assertEqual(payload["warrior_config"]["SYSTEM_NUMBER"], "1")
-        self.assertEqual(payload["warrior_config"]["APP_API_KEY"], "browser-secret")
+        self.assertEqual(payload["tubelight_config"]["OFFICE_NAME"], "1115")
+        self.assertEqual(payload["tubelight_config"]["SYSTEM_NUMBER"], "1")
+        self.assertEqual(payload["tubelight_config"]["APP_API_KEY"], "browser-secret")
         self.assertEqual(payload["catalog"]["providers"][0]["id"], "P1")
         self.assertEqual(response["Cache-Control"], "no-store, no-cache, must-revalidate, private")
 
@@ -112,7 +112,7 @@ class ControlApiTests(TestCase):
         )
         response = self.bootstrap(device_id="device-two")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["warrior_config"]["SYSTEM_NUMBER"], "2")
+        self.assertEqual(response.json()["tubelight_config"]["SYSTEM_NUMBER"], "2")
 
     def test_ip_only_entry_accepts_blank_device_id(self):
         ClientAccess.objects.create(
@@ -164,6 +164,17 @@ class ControlApiTests(TestCase):
             REMOTE_ADDR="203.0.113.10",
         )
         self.assertEqual(response.status_code, 403)
+
+    @override_settings(TRUST_PROXY_HEADERS=True)
+    def test_railway_real_ip_is_used(self):
+        response = self.client.get(
+            reverse("control:public-ipv4"),
+            REMOTE_ADDR="10.0.0.2",
+            HTTP_X_REAL_IP="203.0.113.10",
+            HTTP_X_FORWARDED_FOR="10.0.0.3",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["ipv4"], "203.0.113.10")
 
     @override_settings(TRUST_PROXY_HEADERS=True)
     def test_render_forwarded_first_ip_is_used(self):

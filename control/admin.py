@@ -14,7 +14,7 @@ class ConfigBundleForm(forms.ModelForm):
         widget=forms.Textarea(attrs={"rows": 24, "cols": 100, "spellcheck": "false"}),
         help_text=(
             "Stored encrypted in PostgreSQL. It may contain every key formerly supplied "
-            "through warrior_config.txt. Never paste it into logs or support messages."
+            "through tubelight_config.txt. Never paste it into logs or support messages."
         ),
     )
 

@@ -23,10 +23,10 @@ def parse_key_values(text: str) -> dict[str, str]:
 
 
 class Command(BaseCommand):
-    help = "Import a warrior_config-style key=value file into an encrypted bundle."
+    help = "Import a tubelight_config-style key=value file into an encrypted bundle."
 
     def add_arguments(self, parser):
-        parser.add_argument("path", help="Plaintext warrior_config-style file")
+        parser.add_argument("path", help="Plaintext tubelight_config-style file")
         parser.add_argument("--name", required=True, help="Config bundle name")
         parser.add_argument("--bundle-version", type=int, default=1)
 

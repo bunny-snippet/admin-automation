@@ -1,7 +1,7 @@
 {
   "info": {
     "_postman_id": "6ef0ad26-2c8c-48f4-a3e2-warrior-control-api",
-    "name": "Warrior Control API",
+    "name": "Tubelight Control API",
     "description": "Run requests in order. Get Observed IPv4 stores reported_ipv4. Bootstrap stores access_token and selects the first returned provider/country. device_id must match an active ClientAccess row in Django admin.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
