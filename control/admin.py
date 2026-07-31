@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import zipfile
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 
 from django import forms
