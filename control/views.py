@@ -187,11 +187,14 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
     app_version = ""
     device_id = ""
     try:
-        observed_ip = observed_client_ip(request)
+        if settings.TRUST_APP_REPORTED_IPV4:
+            # In approved app-reported mode the transport address is audit-only.
+            # Do not require Cloudflare headers: the custom domain may be DNS-only.
+            observed_ip = _normalized_ip(request.META.get("REMOTE_ADDR", ""))
+        else:
+            observed_ip = observed_client_ip(request)
         if ipaddress.ip_address(observed_ip).version != 4:
             return _denied("ipv4-required", observed_ip=observed_ip)
-        if _rate_limited(observed_ip):
-            return _denied("rate-limited", observed_ip=observed_ip, status=429)
         body = json.loads(request.body.decode("utf-8"))
         if not isinstance(body, dict):
             raise ValueError("JSON body must be an object")
@@ -215,7 +218,24 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
             status=400,
         )
 
-    if settings.REQUIRE_REPORTED_IP_MATCH and reported_ip != observed_ip:
+    access_ip = (
+        reported_ip if settings.TRUST_APP_REPORTED_IPV4 else observed_ip
+    )
+    rate_key = f"{observed_ip}:{access_ip}"
+    if _rate_limited(rate_key):
+        return _denied(
+            "rate-limited",
+            observed_ip=observed_ip,
+            reported_ip=reported_ip,
+            app_version=app_version,
+            device_id=device_id,
+            status=429,
+        )
+    if (
+        not settings.TRUST_APP_REPORTED_IPV4
+        and settings.REQUIRE_REPORTED_IP_MATCH
+        and reported_ip != observed_ip
+    ):
         return _denied(
             "ip-mismatch",
             observed_ip=observed_ip,
@@ -226,7 +246,7 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
 
     client = (
         ClientAccess.objects.select_related("config_bundle")
-        .filter(ipv4=observed_ip, device_id=device_id)
+        .filter(ipv4=access_ip, device_id=device_id)
         .first()
     )
     if client is None:
@@ -265,7 +285,10 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
     config["SYSTEM_NUMBER"] = client.system_number
     token_payload = {
         "client_id": client.pk,
-        "ip": observed_ip,
+        "ip": access_ip,
+        "ip_source": (
+            "app-reported" if settings.TRUST_APP_REPORTED_IPV4 else "observed"
+        ),
         "device_id": device_id,
         "config_version": client.config_bundle.version,
     }
@@ -304,20 +327,31 @@ def _bearer_token(request: HttpRequest) -> str:
 @require_GET
 def proxy_file(request: HttpRequest, provider_code: str, country_code: str) -> JsonResponse:
     try:
-        observed_ip = observed_client_ip(request)
+        if settings.TRUST_APP_REPORTED_IPV4:
+            observed_ip = _normalized_ip(request.META.get("REMOTE_ADDR", ""))
+        else:
+            observed_ip = observed_client_ip(request)
         device_id = str(request.META.get("HTTP_X_DEVICE_ID", "")).strip()[:128]
+        if settings.TRUST_APP_REPORTED_IPV4:
+            access_ip = _normalized_ip(
+                request.META.get("HTTP_X_CLIENT_IPV4", "")
+            )
+            if ipaddress.ip_address(access_ip).version != 4:
+                raise ValueError("Client IPv4 required")
+        else:
+            access_ip = observed_ip
         token_payload = signing.loads(
             _bearer_token(request),
             salt=TOKEN_SALT,
             max_age=settings.BOOTSTRAP_TOKEN_MAX_AGE,
         )
-        if token_payload.get("ip") != observed_ip:
+        if token_payload.get("ip") != access_ip:
             raise signing.BadSignature("IP changed")
         if token_payload.get("device_id", "") != device_id:
             raise signing.BadSignature("Device changed")
         client = ClientAccess.objects.select_related("config_bundle").get(
             pk=token_payload.get("client_id"),
-            ipv4=observed_ip,
+            ipv4=access_ip,
             device_id=device_id,
             active=True,
             config_bundle__active=True,

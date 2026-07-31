@@ -178,3 +178,12 @@ value in both places:
 With the secret verified, Django reads the ISP-facing IPv4 from
 `CF-Connecting-IP`. Requests that bypass Cloudflare or spoof the client-IP
 header without the secret are rejected.
+
+## Approved desktop-reported IPv4 mode
+
+With `TRUST_APP_REPORTED_IPV4=1`, desktop v1.6.3 obtains its public IPv4 from
+`https://ipv4.test-ipv6.com/ip/`. Bootstrap authorization and proxy-download
+tokens bind that reported IPv4 to the exact `ClientAccess.device_id`. The app
+sends the same value as `X-Client-IPv4` on token-protected catalog downloads.
+The Railway `100.64.0.0/10` transport address remains available in audits but
+is not used for the whitelist lookup in this explicitly approved mode.

@@ -11,6 +11,7 @@ from .models import ClientAccess, ConfigBundle, Provider, ProxyCountryFile
 @override_settings(
     TRUST_PROXY_HEADERS=False,
     REQUIRE_REPORTED_IP_MATCH=True,
+    TRUST_APP_REPORTED_IPV4=False,
     BOOTSTRAP_RATE_LIMIT_PER_MINUTE=100,
     BOOTSTRAP_TOKEN_MAX_AGE=300,
 )
@@ -85,6 +86,33 @@ class ControlApiTests(TestCase):
     def test_reported_ip_must_match_observed_ip(self):
         response = self.bootstrap(reported="203.0.113.11")
         self.assertEqual(response.status_code, 403)
+
+    @override_settings(TRUST_APP_REPORTED_IPV4=True)
+    def test_approved_app_reported_ip_drives_whitelist_and_proxy_token(self):
+        response = self.bootstrap(
+            reported="203.0.113.10",
+            remote="100.64.0.19",
+            device_id="device-one",
+        )
+        self.assertEqual(response.status_code, 200)
+        token = response.json()["access_token"]
+        proxy_response = self.client.get(
+            reverse("control:proxy-file", args=("P1", "US")),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+            HTTP_X_DEVICE_ID="device-one",
+            HTTP_X_CLIENT_IPV4="203.0.113.10",
+            REMOTE_ADDR="100.64.0.21",
+        )
+        self.assertEqual(proxy_response.status_code, 200)
+
+        changed_ip = self.client.get(
+            reverse("control:proxy-file", args=("P1", "US")),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+            HTTP_X_DEVICE_ID="device-one",
+            HTTP_X_CLIENT_IPV4="203.0.113.11",
+            REMOTE_ADDR="100.64.0.21",
+        )
+        self.assertEqual(changed_ip.status_code, 403)
 
     def test_unknown_device_on_allowed_ip_is_denied(self):
         response = self.bootstrap(device_id="not-authorized")
