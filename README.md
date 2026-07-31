@@ -163,3 +163,18 @@ Railway automatically supplies `RAILWAY_PUBLIC_DOMAIN` and `PORT`; the Django
 settings add the public domain, CSRF origin, and Railway health-check hostname
 automatically. Add custom domains explicitly to `ALLOWED_HOSTS` and
 `CSRF_TRUSTED_ORIGINS`.
+
+## Cloudflare real client IPv4 on Railway
+
+`kanikdev.xyz` is Cloudflare-proxied, while Railway can expose an internal
+`100.64.0.0/10` hop in its normal proxy headers. Configure one long random
+value in both places:
+
+1. Railway variable: `CLOUDFLARE_ORIGIN_SECRET=<random secret>`.
+2. Cloudflare > Rules > Overview > Create rule > Request Header Transform Rule.
+3. Apply it to hostname `kanikdev.xyz`.
+4. Set static request header `X-Tubelight-Origin-Secret` to the same secret.
+
+With the secret verified, Django reads the ISP-facing IPv4 from
+`CF-Connecting-IP`. Requests that bypass Cloudflare or spoof the client-IP
+header without the secret are rejected.

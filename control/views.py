@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import ipaddress
 import json
 import logging
@@ -39,8 +40,21 @@ def _normalized_ip(value: Any) -> str:
 
 def observed_client_ip(request: HttpRequest) -> str:
     if settings.TRUST_PROXY_HEADERS:
-        # Railway documents X-Real-IP as the original client address. Keep
-        # X-Forwarded-For as the Render/other reverse-proxy fallback.
+        origin_secret = settings.CLOUDFLARE_ORIGIN_SECRET
+        if origin_secret:
+            supplied_secret = request.META.get(
+                "HTTP_X_TUBELIGHT_ORIGIN_SECRET", ""
+            )
+            if not hmac.compare_digest(supplied_secret, origin_secret):
+                raise ValueError("Untrusted origin request")
+            cloudflare_ip = request.META.get("HTTP_CF_CONNECTING_IP", "")
+            if not cloudflare_ip:
+                raise ValueError("Cloudflare client IP missing")
+            return _normalized_ip(cloudflare_ip)
+
+        # Local/legacy deployments without the Cloudflare origin secret keep
+        # the normal reverse-proxy fallbacks. Production kanikdev.xyz should
+        # always configure the secret so spoofed IP headers are rejected.
         real_ip = request.META.get("HTTP_X_REAL_IP", "")
         if real_ip:
             return _normalized_ip(real_ip)

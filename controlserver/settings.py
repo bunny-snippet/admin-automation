@@ -170,6 +170,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 TRUST_PROXY_HEADERS = env_bool(
     "TRUST_PROXY_HEADERS", bool(render_hostname or railway_hostname)
 )
+CLOUDFLARE_ORIGIN_SECRET = os.getenv("CLOUDFLARE_ORIGIN_SECRET", "").strip()
 REQUIRE_REPORTED_IP_MATCH = env_bool("REQUIRE_REPORTED_IP_MATCH", True)
 BOOTSTRAP_TOKEN_MAX_AGE = int(os.getenv("BOOTSTRAP_TOKEN_MAX_AGE", "300"))
 BOOTSTRAP_RATE_LIMIT_PER_MINUTE = int(

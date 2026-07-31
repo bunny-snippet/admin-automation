@@ -165,6 +165,33 @@ class ControlApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 403)
 
+    @override_settings(
+        TRUST_PROXY_HEADERS=True,
+        CLOUDFLARE_ORIGIN_SECRET="test-origin-secret",
+    )
+    def test_verified_cloudflare_client_ip_has_priority(self):
+        response = self.client.get(
+            reverse("control:public-ipv4"),
+            REMOTE_ADDR="100.64.0.12",
+            HTTP_X_TUBELIGHT_ORIGIN_SECRET="test-origin-secret",
+            HTTP_CF_CONNECTING_IP="203.0.113.10",
+            HTTP_X_REAL_IP="100.64.0.12",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["ipv4"], "203.0.113.10")
+
+    @override_settings(
+        TRUST_PROXY_HEADERS=True,
+        CLOUDFLARE_ORIGIN_SECRET="test-origin-secret",
+    )
+    def test_spoofed_cloudflare_ip_without_origin_secret_is_rejected(self):
+        response = self.client.get(
+            reverse("control:public-ipv4"),
+            REMOTE_ADDR="100.64.0.12",
+            HTTP_CF_CONNECTING_IP="203.0.113.10",
+        )
+        self.assertEqual(response.status_code, 400)
+
     @override_settings(TRUST_PROXY_HEADERS=True)
     def test_railway_real_ip_is_used(self):
         response = self.client.get(
