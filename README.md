@@ -138,3 +138,28 @@ Swagger UI. The raw OpenAPI 3.1 schema is at `/openapi.json`. Import
 requests in order. For local testing, create a ClientAccess row matching
 `127.0.0.1` and the collection's `device_id`; on the deployed server use the
 actual public IPv4 returned by `/api/v1/ip/`.
+
+## Railway deployment with external MySQL
+
+This repository includes `railway.toml` for static collection, pre-deploy
+migrations, Gunicorn binding to Railway's `$PORT`, and `/healthz/` deployment
+health checks. Python is pinned to the maintained 3.12.13 security release so
+Railway does not use the old 3.12.8 standalone artifact that failed attestation.
+Artifact verification remains enabled.
+
+Set these variables in the Railway application service (never commit `.env`):
+
+- `DEBUG=0`
+- `DJANGO_SECRET_KEY=<long random value>`
+- `CONFIG_ENCRYPTION_SECRET=<different long random value>`
+- `DB_ENGINE=mysql`
+- `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`
+- `DB_SSL_MODE=REQUIRED` when required by the MySQL provider
+- `DB_SSL_CA=<CA file path>` only when the provider supplies a mounted CA file
+- `TRUST_PROXY_HEADERS=1`
+- `REQUIRE_REPORTED_IP_MATCH=1`
+
+Railway automatically supplies `RAILWAY_PUBLIC_DOMAIN` and `PORT`; the Django
+settings add the public domain, CSRF origin, and Railway health-check hostname
+automatically. Add custom domains explicitly to `ALLOWED_HOSTS` and
+`CSRF_TRUSTED_ORIGINS`.
