@@ -1,0 +1,400 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Warrior Control API",
+    "version": "1.0.0",
+    "description": "IP and device-gated bootstrap and proxy catalog API for the desktop application."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Current server"
+    }
+  ],
+  "paths": {
+    "/healthz/": {
+      "get": {
+        "summary": "Service health check",
+        "operationId": "healthCheck",
+        "responses": {
+          "200": {
+            "description": "Service is available",
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/ip/": {
+      "get": {
+        "summary": "Get the server-observed IPv4",
+        "description": "Call this first and send the returned IPv4 to bootstrap.",
+        "operationId": "getObservedIpv4",
+        "responses": {
+          "200": {
+            "description": "Observed IPv4",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IpResponse"
+                },
+                "example": {
+                  "ok": true,
+                  "ipv4": "203.0.113.10"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/api/v1/bootstrap/": {
+      "post": {
+        "summary": "Authorize the app and load its configuration/catalog",
+        "description": "reported_ipv4 must match the source IPv4 observed by the server. The IPv4 and device_id must match an active ClientAccess row.",
+        "operationId": "bootstrapApp",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BootstrapRequest"
+              },
+              "example": {
+                "reported_ipv4": "203.0.113.10",
+                "device_id": "stable-device-hash",
+                "app_version": "1.6.1"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Authorized configuration, catalog, and short-lived token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BootstrapResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/proxies/{provider_code}/{country_code}/": {
+      "get": {
+        "summary": "Download a provider/country proxy TXT catalog",
+        "description": "Use the access_token returned by bootstrap. The source IPv4 and X-Device-ID must remain the same.",
+        "operationId": "getProxyCountryFile",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "provider_code",
+            "in": "path",
+            "required": true,
+            "description": "Provider ID returned in bootstrap catalog",
+            "schema": {
+              "type": "string",
+              "example": "P1"
+            }
+          },
+          {
+            "name": "country_code",
+            "in": "path",
+            "required": true,
+            "description": "Country ID returned in bootstrap catalog",
+            "schema": {
+              "type": "string",
+              "example": "US"
+            }
+          },
+          {
+            "name": "X-Device-ID",
+            "in": "header",
+            "required": true,
+            "description": "Same device_id used in bootstrap",
+            "schema": {
+              "type": "string",
+              "example": "stable-device-hash"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Authorized decrypted catalog content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProxyFileResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "Signed bootstrap token"
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Invalid request",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "IP/device/token is not authorized",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "Rate limit exceeded",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Unavailable": {
+        "description": "Configuration cannot be loaded",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "allowed": {
+            "type": "boolean",
+            "const": false
+          },
+          "message": {
+            "type": "string",
+            "example": "Access denied."
+          }
+        },
+        "required": [
+          "allowed",
+          "message"
+        ]
+      },
+      "IpResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "ipv4": {
+            "type": "string",
+            "format": "ipv4"
+          }
+        },
+        "required": [
+          "ok",
+          "ipv4"
+        ]
+      },
+      "BootstrapRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "reported_ipv4": {
+            "type": "string",
+            "format": "ipv4"
+          },
+          "device_id": {
+            "type": "string",
+            "maxLength": 128
+          },
+          "app_version": {
+            "type": "string",
+            "maxLength": 40
+          }
+        },
+        "required": [
+          "reported_ipv4",
+          "device_id",
+          "app_version"
+        ]
+      },
+      "Country": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "sha256": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "version",
+          "sha256"
+        ]
+      },
+      "Provider": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "countries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Country"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "countries"
+        ]
+      },
+      "BootstrapResponse": {
+        "type": "object",
+        "properties": {
+          "allowed": {
+            "type": "boolean",
+            "const": true
+          },
+          "schema_version": {
+            "type": "integer"
+          },
+          "config_version": {
+            "type": "integer"
+          },
+          "expires_in": {
+            "type": "integer"
+          },
+          "access_token": {
+            "type": "string"
+          },
+          "warrior_config": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "catalog": {
+            "type": "object",
+            "properties": {
+              "providers": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Provider"
+                }
+              }
+            },
+            "required": [
+              "providers"
+            ]
+          }
+        },
+        "required": [
+          "allowed",
+          "schema_version",
+          "config_version",
+          "expires_in",
+          "access_token",
+          "warrior_config",
+          "catalog"
+        ]
+      },
+      "ProxyFileResponse": {
+        "type": "object",
+        "properties": {
+          "allowed": {
+            "type": "boolean",
+            "const": true
+          },
+          "provider": {
+            "type": "string"
+          },
+          "country": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string",
+            "description": "Exact decrypted contents of the stored TXT file"
+          }
+        },
+        "required": [
+          "allowed",
+          "provider",
+          "country",
+          "version",
+          "sha256",
+          "content"
+        ]
+      }
+    }
+  }
+}
