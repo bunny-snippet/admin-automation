@@ -45,16 +45,22 @@ elif not SECRET_KEY or not CONFIG_ENCRYPTION_SECRET:
 
 ALLOWED_HOSTS = env_list("ALLOWED_HOSTS")
 render_hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME", "").strip()
-if render_hostname and render_hostname not in ALLOWED_HOSTS:
-    ALLOWED_HOSTS.append(render_hostname)
+railway_hostname = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
+platform_hostnames = [name for name in (render_hostname, railway_hostname) if name]
+if railway_hostname:
+    platform_hostnames.append("healthcheck.railway.app")
+for hostname in platform_hostnames:
+    if hostname not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(hostname)
 if DEBUG and not ALLOWED_HOSTS:
     ALLOWED_HOSTS = ["127.0.0.1", "localhost", "testserver"]
 
 CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS")
-if render_hostname:
-    render_origin = f"https://{render_hostname}"
-    if render_origin not in CSRF_TRUSTED_ORIGINS:
-        CSRF_TRUSTED_ORIGINS.append(render_origin)
+for hostname in (render_hostname, railway_hostname):
+    if hostname:
+        origin = f"https://{hostname}"
+        if origin not in CSRF_TRUSTED_ORIGINS:
+            CSRF_TRUSTED_ORIGINS.append(origin)
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -97,9 +103,20 @@ ASGI_APPLICATION = "controlserver.asgi.application"
 
 DB_ENGINE = os.getenv("DB_ENGINE", "sqlite").strip().lower()
 if DB_ENGINE == "mysql":
-    mysql_options = {"charset": "utf8mb4"}
+    required_mysql_vars = ("DB_NAME", "DB_USER", "DB_PASSWORD", "DB_HOST")
+    missing_mysql_vars = [name for name in required_mysql_vars if not os.getenv(name)]
+    if missing_mysql_vars:
+        raise ImproperlyConfigured(
+            "Missing required MySQL variables: " + ", ".join(missing_mysql_vars)
+        )
+
+    mysql_options = {
+        "charset": "utf8mb4",
+        "connect_timeout": int(os.getenv("DB_CONNECT_TIMEOUT", "10")),
+        "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
+    }
     db_ssl_ca = os.getenv("DB_SSL_CA", "").strip()
-    db_ssl_mode = os.getenv("DB_SSL_MODE", "").strip()
+    db_ssl_mode = os.getenv("DB_SSL_MODE", "").strip().upper()
     if db_ssl_ca:
         mysql_options["ssl"] = {"ca": db_ssl_ca}
     if db_ssl_mode:
@@ -107,13 +124,14 @@ if DB_ENGINE == "mysql":
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.mysql",
-            "NAME": os.getenv("DB_NAME"),
-            "USER": os.getenv("DB_USER"),
-            "PASSWORD": os.getenv("DB_PASSWORD"),
-            "HOST": os.getenv("DB_HOST", "127.0.0.1"),
+            "NAME": os.environ["DB_NAME"],
+            "USER": os.environ["DB_USER"],
+            "PASSWORD": os.environ["DB_PASSWORD"],
+            "HOST": os.environ["DB_HOST"],
             "PORT": os.getenv("DB_PORT", "3306"),
             "OPTIONS": mysql_options,
-            "CONN_MAX_AGE": 60,
+            "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "60")),
+            "CONN_HEALTH_CHECKS": True,
         }
     }
 else:
@@ -149,7 +167,9 @@ STORAGES = {
 }
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-TRUST_PROXY_HEADERS = env_bool("TRUST_PROXY_HEADERS", bool(render_hostname))
+TRUST_PROXY_HEADERS = env_bool(
+    "TRUST_PROXY_HEADERS", bool(render_hostname or railway_hostname)
+)
 REQUIRE_REPORTED_IP_MATCH = env_bool("REQUIRE_REPORTED_IP_MATCH", True)
 BOOTSTRAP_TOKEN_MAX_AGE = int(os.getenv("BOOTSTRAP_TOKEN_MAX_AGE", "300"))
 BOOTSTRAP_RATE_LIMIT_PER_MINUTE = int(
