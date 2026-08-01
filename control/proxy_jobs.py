@@ -49,3 +49,20 @@ def reserve_static_proxies(*, client: ClientAccess, job: ProxyGenerationJob,
             continue
         reservations.append(reservation)
     return reservations
+
+
+def reserve_generated_proxy(*, client: ClientAccess, job: ProxyGenerationJob,
+                            provider_code: str, country_code: str, value: str,
+                            region: str = "", city: str = "") -> ProxyReservation | None:
+    try:
+        with transaction.atomic():
+            reservation = ProxyReservation(
+                client=client, job=job, provider_code=provider_code,
+                country_code=country_code, region=region, city=city,
+                proxy_fingerprint=proxy_fingerprint(value),
+            )
+            reservation.set_proxy(value)
+            reservation.save(force_insert=True)
+            return reservation
+    except IntegrityError:
+        return None
