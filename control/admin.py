@@ -13,6 +13,7 @@ from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.template.response import TemplateResponse
 from django.urls import path, reverse
+from django.utils import timezone
 from django.utils.html import format_html
 
 from .models import BootstrapAudit, ClientAccess, ConfigBundle, Provider, ProxyCountryFile
@@ -120,17 +121,19 @@ def _country_from_filename(filename: str) -> tuple[str, str]:
 
 @transaction.atomic
 def import_catalog_zip(upload, only_provider: str | None = None) -> tuple[int, int]:
-    """Import TXT files from a browser ZIP, replacing existing provider/country rows."""
-    imported = 0
-    replaced = 0
+    """Import a browser ZIP with batched writes, replacing matching country rows."""
     total_size = 0
+    records: dict[tuple[str, str], tuple[str, str]] = {}
     try:
         archive = zipfile.ZipFile(upload)
     except zipfile.BadZipFile as exc:
         raise ValueError("The uploaded file is not a valid ZIP archive.") from exc
 
     with archive:
-        entries = [info for info in archive.infolist() if not info.is_dir() and info.filename.lower().endswith(".txt")]
+        entries = [
+            info for info in archive.infolist()
+            if not info.is_dir() and info.filename.lower().endswith(".txt")
+        ]
         if not entries:
             raise ValueError("The ZIP does not contain any TXT files.")
         if len(entries) > MAX_CATALOG_FILES:
@@ -141,7 +144,10 @@ def import_catalog_zip(upload, only_provider: str | None = None) -> tuple[int, i
             total_size += info.file_size
             if total_size > MAX_CATALOG_TOTAL_BYTES:
                 raise ValueError("Total ZIP TXT content is too large.")
-            parts = [part for part in PurePosixPath(info.filename).parts if part not in {"", ".", ".."}]
+            parts = [
+                part for part in PurePosixPath(info.filename).parts
+                if part not in {"", ".", ".."}
+            ]
             if only_provider:
                 if len(parts) >= 2 and parts[-2] == only_provider:
                     provider_code, filename = only_provider, parts[-1]
@@ -160,26 +166,66 @@ def import_catalog_zip(upload, only_provider: str | None = None) -> tuple[int, i
                 content = archive.read(info).decode("utf-8-sig")
             except UnicodeDecodeError as exc:
                 raise ValueError(f"TXT must be UTF-8: {info.filename}") from exc
-            provider, _ = Provider.objects.get_or_create(
-                code=provider_code,
-                defaults={"display_name": provider_code, "display_order": 0, "active": True},
-            )
-            provider.active = True
-            provider.save(update_fields=("active",))
-            row, created = ProxyCountryFile.objects.get_or_create(
+            records[(provider_code, country_code)] = (country_name, content)
+
+    if not records:
+        raise ValueError("No TXT files matched this provider.")
+
+    provider_codes = sorted({provider_code for provider_code, _ in records})
+    existing_providers = {item.code: item for item in Provider.objects.filter(code__in=provider_codes)}
+    Provider.objects.bulk_create(
+        [
+            Provider(code=code, display_name=code, display_order=0, active=True)
+            for code in provider_codes if code not in existing_providers
+        ],
+        ignore_conflicts=True,
+        batch_size=100,
+    )
+    Provider.objects.filter(code__in=provider_codes).update(active=True)
+    providers = {item.code: item for item in Provider.objects.filter(code__in=provider_codes)}
+
+    provider_ids = [item.pk for item in providers.values()]
+    country_codes = {country_code for _, country_code in records}
+    existing_rows = {
+        (item.provider_id, item.country_code): item
+        for item in ProxyCountryFile.objects.filter(
+            provider_id__in=provider_ids,
+            country_code__in=country_codes,
+        )
+    }
+    now = timezone.now()
+    new_rows: list[ProxyCountryFile] = []
+    changed_rows: list[ProxyCountryFile] = []
+    replaced = 0
+    for (provider_code, country_code), (country_name, content) in records.items():
+        provider = providers[provider_code]
+        row = existing_rows.get((provider.pk, country_code))
+        if row is None:
+            row = ProxyCountryFile(
                 provider=provider,
                 country_code=country_code,
-                defaults={"country_name": country_name, "active": True},
+                country_name=country_name,
+                active=True,
             )
-            if not created:
-                row.version += 1
-                replaced += 1
+            row.set_content(content)
+            new_rows.append(row)
+        else:
+            row.version += 1
             row.country_name = country_name
             row.active = True
+            row.updated_at = now
             row.set_content(content)
-            row.save()
-            imported += 1
-    return imported, replaced
+            changed_rows.append(row)
+            replaced += 1
+    if new_rows:
+        ProxyCountryFile.objects.bulk_create(new_rows, batch_size=100)
+    if changed_rows:
+        ProxyCountryFile.objects.bulk_update(
+            changed_rows,
+            ["country_name", "version", "active", "content_ciphertext", "content_sha256", "updated_at"],
+            batch_size=100,
+        )
+    return len(records), replaced
 
 
 @admin.register(ConfigBundle)
