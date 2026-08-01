@@ -12,6 +12,7 @@ from django.core.cache import cache
 from django.db.models import Prefetch
 from django.db import transaction
 from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.shortcuts import render
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
@@ -154,6 +155,11 @@ def _catalog() -> list[dict[str, Any]]:
         for provider in providers
         if provider.country_files.all()
     ]
+
+
+@require_GET
+def home(request: HttpRequest) -> HttpResponse:
+    return render(request, "control/home.html")
 
 
 @require_GET

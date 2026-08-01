@@ -5,6 +5,7 @@ from . import views
 
 app_name = "control"
 urlpatterns = [
+    path("", views.home, name="home"),
     path("docs/", views.swagger_docs, name="swagger-docs"),
     path("openapi.json", views.openapi_schema, name="openapi-schema"),
     path("healthz/", views.healthz, name="healthz"),
