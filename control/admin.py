@@ -16,7 +16,7 @@ from django.urls import path, reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
-from .models import BootstrapAudit, ClientAccess, ConfigBundle, Provider, ProxyCountryFile
+from .models import BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, Provider, ProxyCountryFile
 
 
 class ConfigBundleForm(forms.ModelForm):
@@ -305,6 +305,42 @@ class ProxyCountryFileAdmin(admin.ModelAdmin):
     )
     list_filter = ("provider", "active")
     search_fields = ("provider__code", "country_code", "country_name")
+
+
+class ExtensionPackageForm(forms.ModelForm):
+    package_zip = forms.FileField(required=False, label="Extension ZIP package")
+
+    class Meta:
+        model = ExtensionPackage
+        fields = ("name", "filename", "version", "active", "is_top", "status", "package_zip")
+
+    def clean_package_zip(self):
+        upload = self.cleaned_data.get("package_zip")
+        if upload is not None and not upload.name.lower().endswith(".zip"):
+            raise forms.ValidationError("Extension package must be a ZIP file.")
+        if upload is not None and upload.size > 20 * 1024 * 1024:
+            raise forms.ValidationError("Extension ZIP must be 20 MB or smaller.")
+        if not self.instance.pk and upload is None:
+            raise forms.ValidationError("Upload an extension ZIP package.")
+        return upload
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        upload = self.cleaned_data.get("package_zip")
+        if upload is not None:
+            instance.filename = upload.name
+            instance.set_package(upload.read())
+        if commit:
+            instance.save()
+        return instance
+
+
+@admin.register(ExtensionPackage)
+class ExtensionPackageAdmin(admin.ModelAdmin):
+    form = ExtensionPackageForm
+    list_display = ("name", "filename", "version", "active", "status", "is_top", "updated_at")
+    list_editable = ("active", "status", "is_top")
+    readonly_fields = ("package_sha256", "updated_at")
 
 
 @admin.register(BootstrapAudit)

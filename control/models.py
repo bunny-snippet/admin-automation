@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 from typing import Any
 
@@ -118,6 +119,33 @@ class ProxyCountryFile(models.Model):
 
     def get_content(self) -> str:
         return decrypt_text(self.content_ciphertext) if self.content_ciphertext else ""
+
+
+class ExtensionPackage(models.Model):
+    name = models.CharField(max_length=120, unique=True)
+    filename = models.CharField(max_length=180)
+    version = models.PositiveIntegerField(default=1)
+    active = models.BooleanField(default=True)
+    is_top = models.BooleanField(default=False)
+    status = models.BooleanField(default=True)
+    package_ciphertext = models.TextField(blank=True, editable=False)
+    package_sha256 = models.CharField(max_length=64, blank=True, editable=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("name",)
+
+    def __str__(self) -> str:
+        return f"{self.name} (v{self.version})"
+
+    def set_package(self, raw: bytes) -> None:
+        self.package_ciphertext = encrypt_text(base64.b64encode(raw).decode("ascii"))
+        self.package_sha256 = hashlib.sha256(raw).hexdigest()
+
+    def get_package(self) -> bytes:
+        if not self.package_ciphertext:
+            return b""
+        return base64.b64decode(decrypt_text(self.package_ciphertext))
 
 
 class BootstrapAudit(models.Model):
