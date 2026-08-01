@@ -474,7 +474,7 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
             # so the app can poll without silently treating this as completion.
             job.status = "waiting_generation"
         job.save(update_fields=("ready_count", "status", "updated_at"))
-        if job.ready_count < job.requested_count:
+        if job.ready_count < job.requested_count and settings.CELERY_BROKER_URL:
             transaction.on_commit(lambda: generate_proxy_job.delay(job.pk))
     return _json_response({"allowed": True, "job": _job_payload(job)}, status=201)
 
