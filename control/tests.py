@@ -9,7 +9,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from .admin import import_catalog_zip
-from .models import ClientAccess, ConfigBundle, Provider, ProxyCountryFile
+from .models import ClientAccess, ConfigBundle, Provider, ProxyCountryFile, ProxyReservation
 
 
 @override_settings(
@@ -202,6 +202,44 @@ class ControlApiTests(TestCase):
             REMOTE_ADDR="203.0.113.10",
         )
         self.assertEqual(changed_device.status_code, 403)
+
+    def test_proxy_job_reserves_each_static_line_once_and_records_activity(self):
+        token = self.bootstrap().json()["access_token"]
+        headers = {
+            "HTTP_AUTHORIZATION": f"Bearer {token}",
+            "HTTP_X_DEVICE_ID": "device-one",
+            "REMOTE_ADDR": "203.0.113.10",
+        }
+        response = self.client.post(
+            reverse("control:proxy-job-create"),
+            data=json.dumps({"provider": "P1", "country": "US", "count": 1}),
+            content_type="application/json", **headers,
+        )
+        self.assertEqual(response.status_code, 201)
+        job = response.json()["job"]
+        self.assertEqual(job["status"], "ready")
+        self.assertEqual(len(job["proxies"]), 1)
+        self.assertNotIn("host:1000", ProxyReservation.objects.get(pk=job["proxies"][0]["reservation_id"]).proxy_ciphertext)
+
+        second = self.client.post(
+            reverse("control:proxy-job-create"),
+            data=json.dumps({"provider": "P1", "country": "US", "count": 2}),
+            content_type="application/json", **headers,
+        )
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(second.json()["job"]["ready_count"], 1)
+        self.assertEqual(second.json()["job"]["status"], "partial")
+
+        activity = self.client.post(
+            reverse("control:profile-activity"),
+            data=json.dumps({
+                "job_id": job["id"], "reservation_id": job["proxies"][0]["reservation_id"],
+                "status": "opened", "group_id": "8", "profile_name": "1115_sys_1_1",
+                "profile_id": "profile-1", "start_urls": ["https://example.test/"],
+            }),
+            content_type="application/json", **headers,
+        )
+        self.assertEqual(activity.status_code, 201)
 
     def test_bad_token_is_denied(self):
         response = self.client.get(

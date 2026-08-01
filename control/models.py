@@ -148,6 +148,53 @@ class ExtensionPackage(models.Model):
         return base64.b64decode(decrypt_text(self.package_ciphertext))
 
 
+class ProxyGenerationJob(models.Model):
+    client = models.ForeignKey(ClientAccess, on_delete=models.CASCADE, related_name="proxy_jobs")
+    provider_code = models.CharField(max_length=32)
+    country_code = models.CharField(max_length=32)
+    region = models.CharField(max_length=120, blank=True)
+    city = models.CharField(max_length=120, blank=True)
+    requested_count = models.PositiveSmallIntegerField(default=1)
+    ready_count = models.PositiveSmallIntegerField(default=0)
+    status = models.CharField(max_length=16, default="queued")
+    error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class ProxyReservation(models.Model):
+    client = models.ForeignKey(ClientAccess, on_delete=models.CASCADE, related_name="proxy_reservations")
+    job = models.ForeignKey(ProxyGenerationJob, on_delete=models.SET_NULL, null=True, blank=True, related_name="reservations")
+    provider_code = models.CharField(max_length=32)
+    country_code = models.CharField(max_length=32)
+    region = models.CharField(max_length=120, blank=True)
+    city = models.CharField(max_length=120, blank=True)
+    proxy_fingerprint = models.CharField(max_length=64, unique=True)
+    proxy_ciphertext = models.TextField(blank=True, editable=False)
+    profile_name = models.CharField(max_length=160, blank=True)
+    profile_id = models.CharField(max_length=128, blank=True)
+    reserved_at = models.DateTimeField(auto_now_add=True)
+
+    def set_proxy(self, value: str) -> None:
+        self.proxy_ciphertext = encrypt_text(value)
+
+    def get_proxy(self) -> str:
+        return decrypt_text(self.proxy_ciphertext) if self.proxy_ciphertext else ""
+
+
+class ProfileActivity(models.Model):
+    client = models.ForeignKey(ClientAccess, on_delete=models.CASCADE, related_name="profile_activity")
+    job = models.ForeignKey(ProxyGenerationJob, on_delete=models.SET_NULL, null=True, blank=True, related_name="profile_activity")
+    reservation = models.ForeignKey(ProxyReservation, on_delete=models.SET_NULL, null=True, blank=True, related_name="profile_activity")
+    group_id = models.CharField(max_length=64, blank=True)
+    profile_name = models.CharField(max_length=160, blank=True)
+    profile_id = models.CharField(max_length=128, blank=True)
+    status = models.CharField(max_length=32)
+    start_urls_json = models.TextField(blank=True)
+    detail = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
 class BootstrapAudit(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     client = models.ForeignKey(

@@ -16,7 +16,7 @@ from django.urls import path, reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
-from .models import BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, Provider, ProxyCountryFile
+from .models import (BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyReservation, ProfileActivity)
 
 
 class ConfigBundleForm(forms.ModelForm):
@@ -367,6 +367,48 @@ class BootstrapAuditAdmin(admin.ModelAdmin):
         "reason",
         "app_version",
     )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ProxyGenerationJob)
+class ProxyGenerationJobAdmin(admin.ModelAdmin):
+    list_display = ("id", "client", "provider_code", "country_code", "region", "city", "requested_count", "ready_count", "status", "created_at")
+    list_filter = ("status", "provider_code", "country_code")
+    search_fields = ("client__name", "client__office_name", "client__system_number")
+    readonly_fields = ("client", "provider_code", "country_code", "region", "city", "requested_count", "ready_count", "status", "error", "created_at", "updated_at")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ProxyReservation)
+class ProxyReservationAdmin(admin.ModelAdmin):
+    list_display = ("id", "client", "job", "provider_code", "country_code", "region", "city", "profile_name", "profile_id", "reserved_at")
+    list_filter = ("provider_code", "country_code")
+    search_fields = ("client__name", "client__office_name", "profile_name", "profile_id", "proxy_fingerprint")
+    readonly_fields = ("client", "job", "provider_code", "country_code", "region", "city", "proxy_fingerprint", "proxy_ciphertext", "profile_name", "profile_id", "reserved_at")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ProfileActivity)
+class ProfileActivityAdmin(admin.ModelAdmin):
+    list_display = ("created_at", "client", "job", "reservation", "group_id", "profile_name", "profile_id", "status")
+    list_filter = ("status", "group_id")
+    search_fields = ("client__name", "client__office_name", "profile_name", "profile_id", "detail")
+    readonly_fields = ("created_at", "client", "job", "reservation", "group_id", "profile_name", "profile_id", "status", "start_urls_json", "detail")
 
     def has_add_permission(self, request):
         return False
