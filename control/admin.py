@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 import zipfile
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 
 
 from django import forms
@@ -107,7 +107,7 @@ class CatalogZipUploadForm(forms.Form):
 
 
 def _country_from_filename(filename: str) -> tuple[str, str]:
-    stem = Path(filename).stem.strip()
+    stem = PurePosixPath(filename).stem.strip()
     if "__" in stem:
         country_code, country_name = stem.split("__", 1)
     else:

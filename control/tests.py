@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import io
 import json
+import zipfile
 
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
+from .admin import import_catalog_zip
 from .models import ClientAccess, ConfigBundle, Provider, ProxyCountryFile
 
 
@@ -63,6 +67,20 @@ class ControlApiTests(TestCase):
             content_type="application/json",
             REMOTE_ADDR=remote,
         )
+
+    def test_zip_catalog_import_replaces_existing_and_adds_new_country(self):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("P1/US__United States.txt", "new-host:1000:user:pass\n")
+            archive.writestr("P1/AU__Australia.txt", "au-host:1000:user:pass\n")
+        upload = SimpleUploadedFile("catalog.zip", buffer.getvalue(), content_type="application/zip")
+        imported, replaced = import_catalog_zip(upload)
+        self.assertEqual((imported, replaced), (2, 1))
+        us = ProxyCountryFile.objects.get(provider__code="P1", country_code="US")
+        au = ProxyCountryFile.objects.get(provider__code="P1", country_code="AU")
+        self.assertEqual(us.get_content(), "new-host:1000:user:pass\n")
+        self.assertEqual(au.country_name, "Australia")
+        self.assertTrue(au.active)
 
     def test_encrypted_fields_do_not_store_plaintext(self):
         self.assertNotIn("browser-secret", self.bundle.payload_ciphertext)
