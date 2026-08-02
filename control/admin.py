@@ -16,7 +16,7 @@ from django.urls import path, reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
-from .models import (BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyReservation, ProfileActivity)
+from .models import (BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyReservation, ProfileActivity, BrowserGroupMapping)
 
 
 class ConfigBundleForm(forms.ModelForm):
@@ -415,3 +415,29 @@ class ProfileActivityAdmin(admin.ModelAdmin):
 
     def has_change_permission(self, request, obj=None):
         return False
+
+
+@admin.register(BrowserGroupMapping)
+class BrowserGroupMappingAdmin(admin.ModelAdmin):
+    list_display = ("internal_name", "browser_group_name", "browser_group_id", "client", "is_default", "active", "updated_at")
+    list_filter = ("is_default", "active", "client__office_name")
+    search_fields = ("internal_name", "browser_group_name", "browser_group_id", "client__ipv4", "client__device_id")
+    list_editable = ("is_default", "active")
+
+
+def _client_ip(obj):
+    return obj.client.ipv4
+_client_ip.short_description = "Client IP"
+
+
+def _device_id(obj):
+    return obj.client.device_id
+_device_id.short_description = "Device ID"
+
+
+ProfileActivityAdmin.list_display = ("created_at", _client_ip, _device_id, "client", "group_id", "profile_name", "profile_id", "status")
+ProfileActivityAdmin.list_filter = ("status", "group_id", "client__office_name", "client__ipv4")
+ProfileActivityAdmin.search_fields = ("client__ipv4", "client__device_id", "client__office_name", "profile_name", "profile_id", "start_urls_json", "detail")
+ProfileActivityAdmin.date_hierarchy = "created_at"
+ProxyGenerationJobAdmin.date_hierarchy = "created_at"
+ProxyReservationAdmin.date_hierarchy = "reserved_at"

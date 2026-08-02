@@ -182,6 +182,24 @@ class ProxyReservation(models.Model):
         return decrypt_text(self.proxy_ciphertext) if self.proxy_ciphertext else ""
 
 
+class BrowserGroupMapping(models.Model):
+    client = models.ForeignKey(ClientAccess, on_delete=models.CASCADE, related_name="browser_groups")
+    browser_group_id = models.CharField(max_length=64)
+    browser_group_name = models.CharField(max_length=160)
+    internal_name = models.CharField(max_length=80, help_text="Your private management label.")
+    is_default = models.BooleanField(default=False)
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("client__office_name", "internal_name")
+        constraints = [models.UniqueConstraint(fields=("client", "browser_group_id"), name="unique_client_browser_group")]
+
+    def __str__(self) -> str:
+        return f"{self.client} / {self.internal_name} ({self.browser_group_id})"
+
+
 class ProfileActivity(models.Model):
     client = models.ForeignKey(ClientAccess, on_delete=models.CASCADE, related_name="profile_activity")
     job = models.ForeignKey(ProxyGenerationJob, on_delete=models.SET_NULL, null=True, blank=True, related_name="profile_activity")
