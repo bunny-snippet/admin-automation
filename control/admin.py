@@ -16,7 +16,7 @@ from django.urls import path, reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
-from .models import (BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyReservation, ProfileActivity, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry)
+from .models import (BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyReservation, ProfileActivity, ProfileDomainActivity, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry)
 
 
 class ConfigBundleForm(forms.ModelForm):
@@ -438,6 +438,63 @@ _device_id.short_description = "Device ID"
 ProfileActivityAdmin.list_display = ("created_at", _client_ip, _device_id, "client", "group_id", "profile_name", "profile_id", "status")
 ProfileActivityAdmin.list_filter = ("status", "group_id", "client__office_name", "client__ipv4")
 ProfileActivityAdmin.search_fields = ("client__ipv4", "client__device_id", "client__office_name", "profile_name", "profile_id", "start_urls_json", "detail")
+
+
+@admin.register(ProfileDomainActivity)
+class ProfileDomainActivityAdmin(admin.ModelAdmin):
+    list_display = (
+        "last_visited_at",
+        "domain",
+        _client_ip,
+        _device_id,
+        "client",
+        "group_id",
+        "profile_name",
+        "profile_id",
+        "visit_count",
+    )
+    list_filter = (
+        ("last_visited_at", admin.DateFieldListFilter),
+        "group_id",
+        "client__office_name",
+        "client__ipv4",
+    )
+    search_fields = (
+        "domain",
+        "client__ipv4",
+        "client__device_id",
+        "client__office_name",
+        "profile_name",
+        "profile_id",
+        "browser_id",
+        "session_id",
+    )
+    readonly_fields = (
+        "created_at",
+        "updated_at",
+        "client",
+        "job",
+        "reservation",
+        "session_id",
+        "group_id",
+        "profile_name",
+        "profile_id",
+        "browser_id",
+        "domain",
+        "first_visited_at",
+        "last_visited_at",
+        "visit_count",
+        "session_started_at",
+        "session_ended_at",
+    )
+    date_hierarchy = "last_visited_at"
+    list_select_related = ("client", "job", "reservation")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(ProxyPoolTarget)

@@ -249,6 +249,54 @@ class ProfileActivity(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 
+class ProfileDomainActivity(models.Model):
+    client = models.ForeignKey(
+        ClientAccess,
+        on_delete=models.CASCADE,
+        related_name="profile_domain_activity",
+    )
+    job = models.ForeignKey(
+        ProxyGenerationJob,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="profile_domain_activity",
+    )
+    reservation = models.ForeignKey(
+        ProxyReservation,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="profile_domain_activity",
+    )
+    session_id = models.CharField(max_length=64, db_index=True)
+    group_id = models.CharField(max_length=64, blank=True, db_index=True)
+    profile_name = models.CharField(max_length=160, blank=True)
+    profile_id = models.CharField(max_length=128, db_index=True)
+    browser_id = models.CharField(max_length=64, blank=True)
+    domain = models.CharField(max_length=253, db_index=True)
+    first_visited_at = models.DateTimeField()
+    last_visited_at = models.DateTimeField()
+    visit_count = models.PositiveIntegerField(default=1)
+    session_started_at = models.DateTimeField()
+    session_ended_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-last_visited_at", "domain")
+        verbose_name_plural = "Profile domain activity"
+        constraints = [
+            models.UniqueConstraint(
+                fields=("client", "profile_id", "session_id", "domain"),
+                name="unique_profile_session_domain",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.profile_id} / {self.domain}"
+
+
 class BootstrapAudit(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     client = models.ForeignKey(

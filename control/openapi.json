@@ -160,6 +160,130 @@
           }
         }
       }
+    },
+    "/api/v1/profile-domains/": {
+      "post": {
+        "summary": "Upload sanitized per-profile domain history after a profile closes",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Device-ID",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Client-IPv4",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "ipv4"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "session_id",
+                  "profile_id",
+                  "session_started_at",
+                  "session_ended_at",
+                  "domains"
+                ],
+                "properties": {
+                  "session_id": {
+                    "type": "string"
+                  },
+                  "job_id": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "reservation_id": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "group_id": {
+                    "type": "string"
+                  },
+                  "profile_name": {
+                    "type": "string"
+                  },
+                  "profile_id": {
+                    "type": "string"
+                  },
+                  "browser_id": {
+                    "type": "string"
+                  },
+                  "session_started_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "session_ended_at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "domains": {
+                    "type": "array",
+                    "maxItems": 2000,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "domain",
+                        "first_visited_at",
+                        "last_visited_at"
+                      ],
+                      "properties": {
+                        "domain": {
+                          "type": "string",
+                          "description": "Hostname only; URLs and paths are rejected."
+                        },
+                        "first_visited_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "last_visited_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "visit_count": {
+                          "type": "integer",
+                          "minimum": 1
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Sanitized domains accepted"
+          },
+          "400": {
+            "description": "Invalid domain-only payload"
+          },
+          "403": {
+            "description": "Access denied"
+          }
+        }
+      }
     }
   },
   "components": {

@@ -4,7 +4,10 @@ import hmac
 import ipaddress
 import json
 import logging
+import re
 from typing import Any
+
+from datetime import timezone as datetime_timezone
 
 from django.conf import settings
 from django.core import signing
@@ -14,11 +17,12 @@ from django.db import transaction
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from .models import (
-    BootstrapAudit, ClientAccess, ExtensionPackage, ProfileActivity, Provider, ProxyCountryFile,
+    BootstrapAudit, ClientAccess, ExtensionPackage, ProfileActivity, ProfileDomainActivity, Provider, ProxyCountryFile,
     ProxyGenerationJob, ProxyReservation,
 )
 from .proxy_jobs import get_or_create_pool_target, reserve_pool_proxies, reserve_static_proxies
@@ -553,3 +557,146 @@ def profile_activity(request: HttpRequest) -> JsonResponse:
             ProxyGenerationJob.DoesNotExist, ProxyReservation.DoesNotExist):
         return _json_response({"allowed": False, "message": "Access denied."}, status=403)
     return _json_response({"allowed": True}, status=201)
+
+
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_DOMAIN_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+
+
+def _normalized_domain(value: Any) -> str:
+    raw = str(value or "").strip().casefold().rstrip(".")
+    if not raw or len(raw) > 253:
+        raise ValueError("Invalid domain")
+    try:
+        return str(ipaddress.ip_address(raw))
+    except ValueError:
+        pass
+    if any(character in raw for character in "/\\?#@:"):
+        raise ValueError("Only a hostname is accepted")
+    try:
+        domain = raw.encode("idna").decode("ascii")
+    except UnicodeError as exc:
+        raise ValueError("Invalid domain") from exc
+    labels = domain.split(".")
+    if not labels or any(not _DOMAIN_LABEL_RE.fullmatch(label) for label in labels):
+        raise ValueError("Invalid domain")
+    return domain
+
+
+def _activity_datetime(value: Any) -> Any:
+    parsed = parse_datetime(str(value or "").strip())
+    if parsed is None:
+        raise ValueError("Invalid activity timestamp")
+    if timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed, datetime_timezone.utc)
+    return parsed
+
+
+@csrf_exempt
+@require_POST
+def profile_domains(request: HttpRequest) -> JsonResponse:
+    try:
+        client = _authenticated_client(request)
+    except (ValueError, signing.BadSignature, signing.SignatureExpired,
+            ClientAccess.DoesNotExist):
+        return _json_response({"allowed": False, "message": "Access denied."}, status=403)
+
+    try:
+        body = json.loads(request.body.decode("utf-8"))
+        session_id = str(body.get("session_id") or "").strip()
+        profile_id = str(body.get("profile_id") or "").strip()[:128]
+        if not _SESSION_ID_RE.fullmatch(session_id) or not profile_id:
+            raise ValueError("Invalid profile session")
+        session_started_at = _activity_datetime(body.get("session_started_at"))
+        session_ended_at = _activity_datetime(body.get("session_ended_at"))
+        if session_ended_at < session_started_at:
+            raise ValueError("Invalid profile session interval")
+        raw_domains = body.get("domains")
+        if not isinstance(raw_domains, list) or not 1 <= len(raw_domains) <= 2000:
+            raise ValueError("Invalid domain batch")
+        job_id = body.get("job_id")
+        reservation_id = body.get("reservation_id")
+        job = (
+            ProxyGenerationJob.objects.get(pk=job_id, client=client)
+            if job_id else None
+        )
+        reservation = (
+            ProxyReservation.objects.get(pk=reservation_id, client=client)
+            if reservation_id else None
+        )
+        normalized: dict[str, dict[str, Any]] = {}
+        for item in raw_domains:
+            if not isinstance(item, dict):
+                raise ValueError("Invalid domain row")
+            domain = _normalized_domain(item.get("domain"))
+            first_visited_at = _activity_datetime(item.get("first_visited_at"))
+            last_visited_at = _activity_datetime(item.get("last_visited_at"))
+            if last_visited_at < first_visited_at:
+                raise ValueError("Invalid domain interval")
+            visit_count = max(1, min(100000, int(item.get("visit_count") or 1)))
+            existing = normalized.get(domain)
+            if existing is None:
+                normalized[domain] = {
+                    "first_visited_at": first_visited_at,
+                    "last_visited_at": last_visited_at,
+                    "visit_count": visit_count,
+                }
+            else:
+                existing["first_visited_at"] = min(
+                    existing["first_visited_at"], first_visited_at
+                )
+                existing["last_visited_at"] = max(
+                    existing["last_visited_at"], last_visited_at
+                )
+                existing["visit_count"] = min(
+                    100000, existing["visit_count"] + visit_count
+                )
+    except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError,
+            ProxyGenerationJob.DoesNotExist, ProxyReservation.DoesNotExist):
+        return _json_response(
+            {"allowed": True, "message": "Invalid domain activity payload."},
+            status=400,
+        )
+
+    group_id = str(body.get("group_id") or "")[:64]
+    profile_name = str(body.get("profile_name") or "")[:160]
+    browser_id = str(body.get("browser_id") or "")[:64]
+    created = 0
+    updated = 0
+    with transaction.atomic():
+        for domain, activity in normalized.items():
+            _row, was_created = ProfileDomainActivity.objects.update_or_create(
+                client=client,
+                profile_id=profile_id,
+                session_id=session_id,
+                domain=domain,
+                defaults={
+                    "job": job,
+                    "reservation": reservation,
+                    "group_id": group_id,
+                    "profile_name": profile_name,
+                    "browser_id": browser_id,
+                    "first_visited_at": activity["first_visited_at"],
+                    "last_visited_at": activity["last_visited_at"],
+                    "visit_count": activity["visit_count"],
+                    "session_started_at": session_started_at,
+                    "session_ended_at": session_ended_at,
+                },
+            )
+            if was_created:
+                created += 1
+            else:
+                updated += 1
+        if reservation is not None:
+            reservation.profile_id = profile_id
+            reservation.profile_name = profile_name
+            reservation.save(update_fields=("profile_id", "profile_name"))
+    return _json_response(
+        {
+            "allowed": True,
+            "accepted": len(normalized),
+            "created": created,
+            "updated": updated,
+        },
+        status=201,
+    )

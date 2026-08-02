@@ -9,7 +9,10 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from .admin import import_catalog_zip
-from .models import ClientAccess, ConfigBundle, Provider, ProxyCountryFile, ProxyReservation
+from .models import (
+    ClientAccess, ConfigBundle, ProfileDomainActivity, Provider,
+    ProxyCountryFile, ProxyReservation,
+)
 
 
 @override_settings(
@@ -240,6 +243,74 @@ class ControlApiTests(TestCase):
             content_type="application/json", **headers,
         )
         self.assertEqual(activity.status_code, 201)
+
+    def test_profile_domain_batch_is_sanitized_idempotent_and_filterable(self):
+        token = self.bootstrap().json()["access_token"]
+        headers = {
+            "HTTP_AUTHORIZATION": f"Bearer {token}",
+            "HTTP_X_DEVICE_ID": "device-one",
+            "REMOTE_ADDR": "203.0.113.10",
+        }
+        payload = {
+            "session_id": "session-123",
+            "group_id": "2255",
+            "profile_name": "1115_sys_1_1",
+            "profile_id": "profile-1",
+            "browser_id": "1217093",
+            "session_started_at": "2026-08-02T13:00:00Z",
+            "session_ended_at": "2026-08-02T13:20:00Z",
+            "domains": [
+                {
+                    "domain": "www.Example.Domain.com",
+                    "first_visited_at": "2026-08-02T13:01:00Z",
+                    "last_visited_at": "2026-08-02T13:02:00Z",
+                    "visit_count": 2,
+                },
+                {
+                    "domain": "ipapi.co",
+                    "first_visited_at": "2026-08-02T13:00:10Z",
+                    "last_visited_at": "2026-08-02T13:00:10Z",
+                    "visit_count": 1,
+                },
+            ],
+        }
+        response = self.client.post(
+            reverse("control:profile-domains"),
+            data=json.dumps(payload),
+            content_type="application/json",
+            **headers,
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["accepted"], 2)
+        self.assertEqual(ProfileDomainActivity.objects.count(), 2)
+        row = ProfileDomainActivity.objects.get(domain="www.example.domain.com")
+        self.assertEqual(row.profile_id, "profile-1")
+        self.assertEqual(row.visit_count, 2)
+
+        repeated = self.client.post(
+            reverse("control:profile-domains"),
+            data=json.dumps(payload),
+            content_type="application/json",
+            **headers,
+        )
+        self.assertEqual(repeated.status_code, 201)
+        self.assertEqual(repeated.json()["updated"], 2)
+        self.assertEqual(ProfileDomainActivity.objects.count(), 2)
+
+        payload["domains"] = [{
+            "domain": "https://example.com/private?token=secret",
+            "first_visited_at": "2026-08-02T13:01:00Z",
+            "last_visited_at": "2026-08-02T13:01:00Z",
+            "visit_count": 1,
+        }]
+        rejected = self.client.post(
+            reverse("control:profile-domains"),
+            data=json.dumps(payload),
+            content_type="application/json",
+            **headers,
+        )
+        self.assertEqual(rejected.status_code, 400)
+        self.assertEqual(ProfileDomainActivity.objects.count(), 2)
 
     def test_bad_token_is_denied(self):
         response = self.client.get(
