@@ -148,6 +148,41 @@ class ExtensionPackage(models.Model):
         return base64.b64decode(decrypt_text(self.package_ciphertext))
 
 
+class ProxyPoolTarget(models.Model):
+    config_bundle = models.ForeignKey(ConfigBundle, on_delete=models.CASCADE, related_name="proxy_pool_targets")
+    provider_code = models.CharField(max_length=32)
+    country_code = models.CharField(max_length=32)
+    region = models.CharField(max_length=120, blank=True)
+    city = models.CharField(max_length=120, blank=True)
+    target_count = models.PositiveIntegerField(default=1000)
+    replenish_below = models.PositiveIntegerField(default=200)
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("config_bundle", "provider_code", "country_code", "region", "city"), name="unique_proxy_pool_target")]
+
+
+class ProxyPoolEntry(models.Model):
+    target = models.ForeignKey(ProxyPoolTarget, on_delete=models.CASCADE, related_name="entries")
+    proxy_fingerprint = models.CharField(max_length=64, unique=True)
+    proxy_ciphertext = models.TextField(editable=False)
+    state = models.CharField(max_length=16, default="available")
+    exit_ip = models.GenericIPAddressField(blank=True, null=True)
+    fraud_score = models.IntegerField(blank=True, null=True)
+    reserved_client = models.ForeignKey(ClientAccess, on_delete=models.SET_NULL, blank=True, null=True, related_name="pool_entries")
+    created_at = models.DateTimeField(auto_now_add=True)
+    tested_at = models.DateTimeField(blank=True, null=True)
+    reserved_at = models.DateTimeField(blank=True, null=True)
+
+    def set_proxy(self, value: str) -> None:
+        self.proxy_ciphertext = encrypt_text(value)
+
+    def get_proxy(self) -> str:
+        return decrypt_text(self.proxy_ciphertext)
+
+
 class ProxyGenerationJob(models.Model):
     client = models.ForeignKey(ClientAccess, on_delete=models.CASCADE, related_name="proxy_jobs")
     provider_code = models.CharField(max_length=32)
@@ -165,6 +200,7 @@ class ProxyGenerationJob(models.Model):
 class ProxyReservation(models.Model):
     client = models.ForeignKey(ClientAccess, on_delete=models.CASCADE, related_name="proxy_reservations")
     job = models.ForeignKey(ProxyGenerationJob, on_delete=models.SET_NULL, null=True, blank=True, related_name="reservations")
+    pool_entry = models.ForeignKey(ProxyPoolEntry, on_delete=models.SET_NULL, null=True, blank=True, related_name="reservations")
     provider_code = models.CharField(max_length=32)
     country_code = models.CharField(max_length=32)
     region = models.CharField(max_length=120, blank=True)

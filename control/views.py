@@ -21,8 +21,8 @@ from .models import (
     BootstrapAudit, ClientAccess, ProfileActivity, Provider, ProxyCountryFile,
     ProxyGenerationJob, ProxyReservation,
 )
-from .proxy_jobs import reserve_static_proxies
-from .tasks import generate_proxy_job
+from .proxy_jobs import get_or_create_pool_target, reserve_pool_proxies, reserve_static_proxies
+from .tasks import generate_proxy_job, refill_proxy_pool
 from .openapi import OPENAPI_SCHEMA, SWAGGER_HTML
 
 
@@ -466,10 +466,13 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
             client=client, provider_code=provider_code, country_code=country_code,
             region=region, city=city, requested_count=requested_count, status="queued",
         )
-        reservations = reserve_static_proxies(
-            client=client, job=job, provider_code=provider_code,
-            country_code=country_code, region=region, city=city,
+        reservations = reserve_pool_proxies(
+            client=client, job=job, provider_code=provider_code, country_code=country_code, region=region, city=city,
         )
+        if len(reservations) < requested_count:
+            reservations += reserve_static_proxies(
+                client=client, job=job, provider_code=provider_code, country_code=country_code, region=region, city=city,
+            )
         job.ready_count = len(reservations)
         if job.ready_count == job.requested_count:
             job.status = "ready"
@@ -480,8 +483,11 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
             # so the app can poll without silently treating this as completion.
             job.status = "waiting_generation"
         job.save(update_fields=("ready_count", "status", "updated_at"))
-        if job.ready_count < job.requested_count and settings.CELERY_BROKER_URL:
-            transaction.on_commit(lambda: generate_proxy_job.delay(job.pk))
+        if settings.CELERY_BROKER_URL:
+            target = get_or_create_pool_target(client=client, provider_code=provider_code, country_code=country_code, region=region, city=city)
+            transaction.on_commit(lambda target_id=target.pk: refill_proxy_pool.delay(target_id))
+            if job.ready_count < job.requested_count:
+                transaction.on_commit(lambda: generate_proxy_job.delay(job.pk))
     return _json_response({"allowed": True, "job": _job_payload(job)}, status=201)
 
 

@@ -5,8 +5,10 @@ import re
 
 from celery import shared_task
 
-from .models import ProxyGenerationJob
-from .proxy_jobs import reserve_generated_proxy
+from django.db import IntegrityError, transaction
+
+from .models import ProxyGenerationJob, ProxyPoolEntry, ProxyPoolTarget
+from .proxy_jobs import proxy_fingerprint, reserve_generated_proxy
 
 
 def _value(config: dict, *names: str) -> str:
@@ -79,3 +81,38 @@ def generate_proxy_job(self, job_id: int) -> None:
         job.status = "failed" if not job.ready_count else "partial"
         job.error = str(exc)[:1000]
         job.save(update_fields=("status", "error", "updated_at"))
+
+
+@shared_task(bind=True, autoretry_for=(), max_retries=0)
+def refill_proxy_pool(self, target_id: int) -> int:
+    """Pre-generate inventory so desktop requests receive ready sessions immediately."""
+    target = ProxyPoolTarget.objects.select_related("config_bundle").get(pk=target_id)
+    if not target.active:
+        return 0
+    available = target.entries.filter(state="available").count()
+    needed = max(0, target.target_count - available)
+    if not needed:
+        return 0
+    lines = _generate(target.provider_code, target.country_code, target.region, target.city, min(needed, 250), target.config_bundle.get_payload())
+    created = 0
+    for line in lines:
+        try:
+            with transaction.atomic():
+                entry = ProxyPoolEntry(target=target, proxy_fingerprint=proxy_fingerprint(line))
+                entry.set_proxy(line)
+                entry.save(force_insert=True)
+                created += 1
+        except IntegrityError:
+            continue
+    return created
+
+
+@shared_task
+def maintain_proxy_pools() -> int:
+    """Queue replenishment for each active pool at/below its low-water mark."""
+    queued = 0
+    for target in ProxyPoolTarget.objects.filter(active=True):
+        if target.entries.filter(state="available").count() <= target.replenish_below:
+            refill_proxy_pool.delay(target.pk)
+            queued += 1
+    return queued

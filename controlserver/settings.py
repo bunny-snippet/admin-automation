@@ -185,6 +185,9 @@ CELERY_RESULT_BACKEND = CELERY_BROKER_URL
 CELERY_TASK_DEFAULT_QUEUE = "proxy-jobs"
 CELERY_TASK_ALWAYS_EAGER = env_bool("CELERY_TASK_ALWAYS_EAGER", False)
 CELERY_TASK_IGNORE_RESULT = True
+CELERY_BEAT_SCHEDULE = {
+    "maintain-proxy-pools": {"task": "control.tasks.maintain_proxy_pools", "schedule": 300.0},
+}
 DATA_UPLOAD_MAX_MEMORY_SIZE = 1024 * 1024
 
 if TRUST_PROXY_HEADERS:

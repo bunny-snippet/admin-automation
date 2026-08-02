@@ -16,7 +16,7 @@ from django.urls import path, reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
-from .models import (BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyReservation, ProfileActivity, BrowserGroupMapping)
+from .models import (BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyReservation, ProfileActivity, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry)
 
 
 class ConfigBundleForm(forms.ModelForm):
@@ -441,3 +441,24 @@ ProfileActivityAdmin.search_fields = ("client__ipv4", "client__device_id", "clie
 ProfileActivityAdmin.date_hierarchy = "created_at"
 ProxyGenerationJobAdmin.date_hierarchy = "created_at"
 ProxyReservationAdmin.date_hierarchy = "reserved_at"
+
+
+@admin.register(ProxyPoolTarget)
+class ProxyPoolTargetAdmin(admin.ModelAdmin):
+    list_display = ("provider_code", "country_code", "region", "city", "config_bundle", "target_count", "replenish_below", "active", "available_entries")
+    list_filter = ("provider_code", "country_code", "active")
+    search_fields = ("provider_code", "country_code", "region", "city", "config_bundle__name")
+    list_select_related = ("config_bundle",)
+
+    @admin.display(description="Available")
+    def available_entries(self, obj):
+        return obj.entries.filter(state="available").count()
+
+
+@admin.register(ProxyPoolEntry)
+class ProxyPoolEntryAdmin(admin.ModelAdmin):
+    list_display = ("target", "state", "exit_ip", "fraud_score", "reserved_client", "created_at", "reserved_at")
+    list_filter = ("state", "target__provider_code", "target__country_code")
+    search_fields = ("proxy_fingerprint", "exit_ip", "reserved_client__device_id")
+    readonly_fields = ("proxy_fingerprint", "proxy_ciphertext", "created_at", "tested_at", "reserved_at")
+    list_select_related = ("target", "reserved_client")
