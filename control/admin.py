@@ -438,9 +438,6 @@ _device_id.short_description = "Device ID"
 ProfileActivityAdmin.list_display = ("created_at", _client_ip, _device_id, "client", "group_id", "profile_name", "profile_id", "status")
 ProfileActivityAdmin.list_filter = ("status", "group_id", "client__office_name", "client__ipv4")
 ProfileActivityAdmin.search_fields = ("client__ipv4", "client__device_id", "client__office_name", "profile_name", "profile_id", "start_urls_json", "detail")
-ProfileActivityAdmin.date_hierarchy = "created_at"
-ProxyGenerationJobAdmin.date_hierarchy = "created_at"
-ProxyReservationAdmin.date_hierarchy = "reserved_at"
 
 
 @admin.register(ProxyPoolTarget)
