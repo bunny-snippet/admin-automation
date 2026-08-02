@@ -156,7 +156,7 @@ class ProxyGenerationJob(models.Model):
     city = models.CharField(max_length=120, blank=True)
     requested_count = models.PositiveSmallIntegerField(default=1)
     ready_count = models.PositiveSmallIntegerField(default=0)
-    status = models.CharField(max_length=16, default="queued")
+    status = models.CharField(max_length=32, default="queued")
     error = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
