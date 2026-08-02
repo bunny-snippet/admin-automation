@@ -18,7 +18,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from .models import (
-    BootstrapAudit, ClientAccess, ProfileActivity, Provider, ProxyCountryFile,
+    BootstrapAudit, ClientAccess, ExtensionPackage, ProfileActivity, Provider, ProxyCountryFile,
     ProxyGenerationJob, ProxyReservation,
 )
 from .proxy_jobs import get_or_create_pool_target, reserve_pool_proxies, reserve_static_proxies
@@ -323,7 +323,12 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
             "expires_in": settings.BOOTSTRAP_TOKEN_MAX_AGE,
             "access_token": token,
             "tubelight_config": config,
-            "catalog": {"providers": _catalog()},
+            "catalog": {"providers": _catalog(), "extensions": [
+                {"id": item.pk, "name": item.name, "filename": item.filename,
+                 "version": item.version, "sha256": item.package_sha256,
+                 "is_top": item.is_top, "status": item.status}
+                for item in ExtensionPackage.objects.filter(active=True).exclude(package_ciphertext="")
+            ]},
         }
     )
 
@@ -442,6 +447,24 @@ def _job_payload(job: ProxyGenerationJob) -> dict[str, Any]:
             for item in reservations
         ],
     }
+
+
+@require_GET
+def extension_package(request: HttpRequest, package_id: int) -> HttpResponse:
+    try:
+        _authenticated_client(request)
+        package = ExtensionPackage.objects.get(pk=package_id, active=True)
+        raw = package.get_package()
+        if not raw:
+            raise ExtensionPackage.DoesNotExist
+    except (ValueError, signing.BadSignature, signing.SignatureExpired,
+            ClientAccess.DoesNotExist, ExtensionPackage.DoesNotExist):
+        return _json_response({"allowed": False, "message": "Access denied."}, status=403)
+    response = HttpResponse(raw, content_type="application/zip")
+    response["Content-Disposition"] = f'attachment; filename="{package.filename}"'
+    response["X-Content-SHA256"] = package.package_sha256
+    response["Cache-Control"] = "no-store"
+    return response
 
 
 @csrf_exempt
