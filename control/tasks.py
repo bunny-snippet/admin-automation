@@ -55,7 +55,7 @@ def _generate(provider: str, country: str, region: str, city: str, count: int, c
             user = f"{username}-country-{country}"
             if region: user += f"-subdivision-{region}"
             if city: user += f"-city-{city}"
-            result.append(f"network.joinmassive.com:65534:{user}-session-{_session()}-sessionttl-60:{password}")
+            result.append(f"network.joinmassive.com:65534:{user}-session-{_session()}:{password}")
     else:
         raise ValueError("Dynamic generation is not configured for this provider")
     return result
