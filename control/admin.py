@@ -487,7 +487,6 @@ class ProfileDomainActivityAdmin(admin.ModelAdmin):
         "session_started_at",
         "session_ended_at",
     )
-    date_hierarchy = "last_visited_at"
     list_select_related = ("client", "job", "reservation")
 
     def has_add_permission(self, request):
