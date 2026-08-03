@@ -19,7 +19,9 @@ from .models import (
     ProxyReservation,
 )
 from .proxy_jobs import reserve_pool_proxies
-from .tasks import _generate, ensure_pool_targets, refill_proxy_pool
+from .tasks import (
+    _generate, ensure_pool_targets, queue_refill_proxy_pool, refill_proxy_pool,
+)
 
 
 @override_settings(
@@ -645,6 +647,42 @@ class ProxyPoolTaskTests(TestCase):
 
         self.assertEqual(refill_proxy_pool.run(target.pk), 5)
         self.assertEqual(target.entries.filter(state="available").count(), 5)
+
+    def test_only_one_outstanding_refill_is_queued_per_target(self):
+        target = ProxyPoolTarget.objects.create(
+            config_bundle=self.bundle,
+            provider_code="P2",
+            country_code="US",
+            target_count=5,
+            replenish_below=2,
+        )
+
+        with mock.patch("control.tasks.refill_proxy_pool.delay") as delay:
+            self.assertTrue(queue_refill_proxy_pool(target.pk))
+            self.assertFalse(queue_refill_proxy_pool(target.pk))
+
+        delay.assert_called_once_with(target.pk)
+        target.refresh_from_db()
+        self.assertTrue(target.refill_pending)
+
+        self.assertEqual(refill_proxy_pool.run(target.pk), 5)
+        target.refresh_from_db()
+        self.assertFalse(target.refill_pending)
+
+    def test_refill_claim_is_released_when_enqueue_fails(self):
+        target = ProxyPoolTarget.objects.create(
+            config_bundle=self.bundle,
+            provider_code="P2",
+            country_code="US",
+        )
+        with mock.patch(
+            "control.tasks.refill_proxy_pool.delay",
+            side_effect=RuntimeError("broker"),
+        ):
+            with self.assertRaises(RuntimeError):
+                queue_refill_proxy_pool(target.pk)
+        target.refresh_from_db()
+        self.assertFalse(target.refill_pending)
 
 
 class StaffPanelTests(TestCase):

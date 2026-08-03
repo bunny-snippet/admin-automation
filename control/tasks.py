@@ -300,6 +300,25 @@ def refill_proxy_pool(self, target_id: int) -> int:
         except ProxyPoolTarget.DoesNotExist:
             pass
         raise
+    finally:
+        ProxyPoolTarget.objects.filter(pk=target_id).update(refill_pending=False)
+
+
+def queue_refill_proxy_pool(target_id: int) -> bool:
+    """Queue at most one outstanding refill task for a target."""
+    claimed = ProxyPoolTarget.objects.filter(
+        pk=target_id,
+        active=True,
+        refill_pending=False,
+    ).update(refill_pending=True)
+    if not claimed:
+        return False
+    try:
+        refill_proxy_pool.delay(target_id)
+    except Exception:
+        ProxyPoolTarget.objects.filter(pk=target_id).update(refill_pending=False)
+        raise
+    return True
 
 
 @shared_task(bind=True, autoretry_for=(), max_retries=0)
@@ -343,9 +362,9 @@ def maintain_proxy_pools(force: bool = False) -> int:
         if not provider_is_configured(target.provider_code, config):
             continue
         available = int(target.available_count)
-        if force or available <= target.replenish_below:
-            refill_proxy_pool.delay(target.pk)
-            queued += 1
+        if available <= target.replenish_below:
+            if queue_refill_proxy_pool(target.pk):
+                queued += 1
     return queued
 
 

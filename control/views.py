@@ -26,7 +26,7 @@ from .models import (
     ProxyGenerationJob, ProxyReservation, ProxyRegionCatalog,
 )
 from .proxy_jobs import get_or_create_pool_target, reserve_pool_proxies, reserve_static_proxies
-from .tasks import refill_proxy_pool
+from .tasks import queue_refill_proxy_pool
 from .openapi import OPENAPI_SCHEMA, SWAGGER_HTML
 
 
@@ -566,7 +566,9 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
                 client=client, provider_code=provider_code,
                 country_code=country_code, region=region, city=city,
             )
-            transaction.on_commit(lambda target_id=target.pk: refill_proxy_pool.delay(target_id))
+            transaction.on_commit(
+                lambda target_id=target.pk: queue_refill_proxy_pool(target_id)
+            )
     return _json_response({"allowed": True, "job": _job_payload(job)}, status=201)
 
 

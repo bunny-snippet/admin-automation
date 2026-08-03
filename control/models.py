@@ -203,6 +203,7 @@ class ProxyPoolTarget(models.Model):
     target_count = models.PositiveIntegerField(default=1000)
     replenish_below = models.PositiveIntegerField(default=200)
     active = models.BooleanField(default=True)
+    refill_pending = models.BooleanField(default=False, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

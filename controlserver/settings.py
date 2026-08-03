@@ -194,7 +194,7 @@ CELERY_TASK_IGNORE_RESULT = True
 CELERY_BEAT_SCHEDULE = {
     "maintain-proxy-pools": {
         "task": "control.tasks.maintain_proxy_pools",
-        "schedule": 60.0,
+        "schedule": 300.0,
     },
     "morning-provider-geography-sync": {
         "task": "control.tasks.sync_proxy_geography",
