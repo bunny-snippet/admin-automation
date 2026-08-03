@@ -1,11 +1,37 @@
 from django.urls import path
 
-from . import views
+from . import panel_resources, panel_views, views
 
 
 app_name = "control"
 urlpatterns = [
     path("", views.home, name="home"),
+    path("panel/", panel_views.panel, name="panel"),
+    path(
+        "panel/api/overview/",
+        panel_views.panel_overview_api,
+        name="panel-overview-api",
+    ),
+    path(
+        "panel/api/domain-activity/",
+        panel_views.panel_domain_activity_api,
+        name="panel-domain-activity-api",
+    ),
+    path(
+        "panel/api/domain-activity/export/",
+        panel_views.panel_domain_activity_export,
+        name="panel-domain-activity-export",
+    ),
+    path(
+        "panel/api/domain-activity/<int:activity_id>/",
+        panel_views.panel_domain_activity_detail_api,
+        name="panel-domain-activity-detail-api",
+    ),
+    path(
+        "panel/api/resources/<str:resource>/",
+        panel_resources.panel_resource_api,
+        name="panel-resource-api",
+    ),
     path("docs/", views.swagger_docs, name="swagger-docs"),
     path("openapi.json", views.openapi_schema, name="openapi-schema"),
     path("healthz/", views.healthz, name="healthz"),

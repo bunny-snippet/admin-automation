@@ -3,10 +3,13 @@ from __future__ import annotations
 import io
 import json
 import zipfile
+from datetime import timedelta
 
+from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 from .admin import import_catalog_zip
 from .models import (
@@ -417,3 +420,122 @@ class ControlApiTests(TestCase):
         docs_response = self.client.get(reverse("control:swagger-docs"))
         self.assertEqual(docs_response.status_code, 200)
         self.assertContains(docs_response, "SwaggerUIBundle")
+
+
+class StaffPanelTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_superuser(
+            username="panel-admin",
+            email="panel@example.com",
+            password="StrongPanelPassword123!",
+        )
+        self.bundle = ConfigBundle.objects.create(
+            name="Panel config",
+            browser_group_id="701",
+            browser_group_name="Testing",
+        )
+        self.client_access = ClientAccess.objects.create(
+            name="North device 1",
+            ipv4="203.0.113.40",
+            device_id="device-panel-one",
+            office_name="North",
+            system_number="1",
+            profile_name="North One",
+            config_bundle=self.bundle,
+            last_seen_at=timezone.now(),
+        )
+        now = timezone.now()
+        self.activity = ProfileDomainActivity.objects.create(
+            client=self.client_access,
+            session_id="session-panel-1",
+            group_id="701",
+            profile_name="North One",
+            profile_id="profile-panel-1",
+            browser_id="991",
+            domain="www.example.com",
+            first_visited_at=now - timedelta(minutes=12),
+            last_visited_at=now - timedelta(minutes=2),
+            visit_count=3,
+            session_started_at=now - timedelta(minutes=15),
+            session_ended_at=now,
+        )
+        ProfileDomainActivity.objects.create(
+            client=self.client_access,
+            session_id="session-panel-1",
+            group_id="701",
+            profile_name="North One",
+            profile_id="profile-panel-1",
+            browser_id="991",
+            domain="docs.example.com",
+            first_visited_at=now - timedelta(minutes=8),
+            last_visited_at=now - timedelta(minutes=4),
+            visit_count=2,
+            session_started_at=now - timedelta(minutes=15),
+            session_ended_at=now,
+        )
+
+    def login(self):
+        self.client.force_login(self.user)
+
+    def test_panel_uses_existing_admin_authentication(self):
+        response = self.client.get(reverse("control:panel"))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("admin:login"), response["Location"])
+
+        self.login()
+        response = self.client.get(reverse("control:panel"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Automation Control Center")
+        self.assertContains(response, "Domain activity")
+
+    def test_overview_and_every_sidebar_resource_are_api_backed(self):
+        self.login()
+        overview = self.client.get(reverse("control:panel-overview-api"))
+        self.assertEqual(overview.status_code, 200)
+        self.assertEqual(overview.json()["cards"]["active_devices"], 1)
+        self.assertEqual(overview.json()["cards"]["domain_visits_24h"], 5)
+
+        resources = (
+            "devices", "configurations", "groups", "providers",
+            "proxy-catalog", "extensions", "proxy-pools", "proxy-inventory",
+            "proxy-jobs", "reservations", "profile-activity", "access-audit",
+        )
+        for resource in resources:
+            with self.subTest(resource=resource):
+                response = self.client.get(
+                    reverse("control:panel-resource-api", args=(resource,))
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertIn("rows", response.json())
+                self.assertIn("columns", response.json())
+
+    def test_domain_activity_filters_detail_and_csv_are_precise(self):
+        self.login()
+        response = self.client.get(
+            reverse("control:panel-domain-activity-api"),
+            {"range": "30d", "office": "North", "domain": "www.example"},
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["metrics"]["visits"], 3)
+        self.assertEqual(payload["metrics"]["unique_domains"], 1)
+        self.assertEqual(payload["rows"][0]["device_id"], "device-panel-one")
+        self.assertEqual(payload["rows"][0]["profile_id"], "profile-panel-1")
+        self.assertEqual(payload["rows"][0]["group_id"], "701")
+
+        detail = self.client.get(
+            reverse("control:panel-domain-activity-detail-api", args=(self.activity.pk,))
+        )
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(len(detail.json()["session_domains"]), 2)
+        self.assertEqual(detail.json()["activity"]["ipv4"], "203.0.113.40")
+
+        export = self.client.get(
+            reverse("control:panel-domain-activity-export"),
+            {"range": "30d", "office": "North"},
+        )
+        self.assertEqual(export.status_code, 200)
+        self.assertEqual(export["Content-Type"], "text/csv; charset=utf-8")
+        exported = export.content.decode("utf-8")
+        self.assertIn("www.example.com", exported)
+        self.assertIn("device-panel-one", exported)
