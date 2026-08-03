@@ -200,6 +200,48 @@ class ControlApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, b"PK\x03\x04test-extension")
 
+    def test_bootstrap_delivers_every_packaged_extension_and_status(self):
+        first = ExtensionPackage(
+            name="First extension",
+            filename="first.zip",
+            active=False,
+            status=True,
+        )
+        first.set_package(b"PK\x03\x04first")
+        first.save()
+        second = ExtensionPackage(
+            name="Second extension",
+            filename="second.zip",
+            active=True,
+            status=False,
+        )
+        second.set_package(b"PK\x03\x04second")
+        second.save()
+        ExtensionPackage.objects.create(
+            name="Missing package",
+            filename="missing.zip",
+            active=True,
+            status=True,
+        )
+
+        bootstrap = self.bootstrap().json()
+        rows = {
+            row["id"]: row
+            for row in bootstrap["catalog"]["extensions"]
+        }
+        self.assertEqual(set(rows), {first.pk, second.pk})
+        self.assertTrue(rows[first.pk]["status"])
+        self.assertFalse(rows[second.pk]["status"])
+
+        response = self.client.get(
+            reverse("control:extension-package", args=(first.pk,)),
+            HTTP_AUTHORIZATION=f"Bearer {bootstrap['access_token']}",
+            HTTP_X_DEVICE_ID="device-one",
+            REMOTE_ADDR="203.0.113.10",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"PK\x03\x04first")
+
     def test_same_public_ip_can_have_multiple_authorized_systems(self):
         ClientAccess.objects.create(
             name="Office system 2",

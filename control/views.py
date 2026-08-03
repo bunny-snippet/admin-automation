@@ -358,7 +358,7 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
                 {"id": item.pk, "name": item.name, "filename": item.filename,
                  "version": item.version, "sha256": item.package_sha256,
                  "is_top": item.is_top, "status": item.status}
-                for item in ExtensionPackage.objects.filter(active=True).exclude(package_ciphertext="")
+                for item in ExtensionPackage.objects.exclude(package_ciphertext="")
             ]},
         }
     )
@@ -498,7 +498,7 @@ def _job_payload(job: ProxyGenerationJob) -> dict[str, Any]:
 def extension_package(request: HttpRequest, package_id: int) -> HttpResponse:
     try:
         _authenticated_client(request)
-        package = ExtensionPackage.objects.get(pk=package_id, active=True)
+        package = ExtensionPackage.objects.get(pk=package_id)
         raw = package.get_package()
         if not raw:
             raise ExtensionPackage.DoesNotExist

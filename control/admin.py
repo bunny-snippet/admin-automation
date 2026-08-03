@@ -344,7 +344,7 @@ class ExtensionPackageForm(forms.ModelForm):
 
     class Meta:
         model = ExtensionPackage
-        fields = ("name", "filename", "version", "active", "is_top", "status", "package_zip")
+        fields = ("name", "filename", "version", "is_top", "status", "package_zip")
 
     def clean_package_zip(self):
         upload = self.cleaned_data.get("package_zip")
@@ -370,8 +370,8 @@ class ExtensionPackageForm(forms.ModelForm):
 @admin.register(ExtensionPackage)
 class ExtensionPackageAdmin(admin.ModelAdmin):
     form = ExtensionPackageForm
-    list_display = ("name", "filename", "version", "active", "status", "is_top", "updated_at")
-    list_editable = ("active", "status", "is_top")
+    list_display = ("name", "filename", "version", "status", "is_top", "updated_at")
+    list_editable = ("status", "is_top")
     readonly_fields = ("package_sha256", "updated_at")
 
 

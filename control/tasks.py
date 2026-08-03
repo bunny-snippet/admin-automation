@@ -321,6 +321,8 @@ def generate_proxy_job(self, job_id: int) -> None:
 @shared_task
 def maintain_proxy_pools(force: bool = False) -> int:
     """Create global pools and refill low country/region inventory."""
+    if force:
+        sync_provider_geography()
     ensure_pool_targets()
     queued = 0
     targets = (
