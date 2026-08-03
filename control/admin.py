@@ -16,7 +16,7 @@ from django.urls import path, reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
-from .models import (BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyReservation, ProfileActivity, ProfileDomainActivity, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry)
+from .models import (BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyReservation, ProfileActivity, ProfileDomainActivity, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry, ProxyRegionCatalog)
 
 
 class ConfigBundleForm(forms.ModelForm):
@@ -328,6 +328,15 @@ class ProxyCountryFileAdmin(admin.ModelAdmin):
     )
     list_filter = ("provider", "active")
     search_fields = ("provider__code", "country_code", "country_name")
+
+
+@admin.register(ProxyRegionCatalog)
+class ProxyRegionCatalogAdmin(admin.ModelAdmin):
+    list_display = (
+        "provider", "country_code", "region_code", "region_name", "source", "active"
+    )
+    list_filter = ("provider", "country_code", "source", "active")
+    search_fields = ("provider__code", "country_code", "region_code", "region_name")
 
 
 class ExtensionPackageForm(forms.ModelForm):

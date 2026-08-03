@@ -1,18 +1,26 @@
 from __future__ import annotations
 
+import os
 import re
 import secrets
 import urllib.parse
 
 from celery import shared_task
 from django.db import transaction
+from django.db.models import Count, Q
 
+from .geo_catalog import (
+    ensure_global_country_catalog,
+    ensure_p1_region_catalog,
+    sync_provider_geography,
+)
 from .models import (
     ConfigBundle,
     ProxyCountryFile,
     ProxyGenerationJob,
     ProxyPoolEntry,
     ProxyPoolTarget,
+    ProxyRegionCatalog,
 )
 from .proxy_jobs import fulfill_waiting_jobs, get_or_create_pool_target, proxy_fingerprint
 
@@ -24,7 +32,7 @@ SUPPORTED_DYNAMIC_PROVIDERS = frozenset({"P1", "P2", "P3"})
 
 def _value(config: dict, *names: str) -> str:
     for name in names:
-        value = str(config.get(name) or "").strip()
+        value = str(config.get(name) or os.environ.get(name) or "").strip()
         if value:
             return value
     return ""
@@ -132,16 +140,30 @@ def ensure_pool_targets(
     *,
     target_count: int = DEFAULT_POOL_TARGET,
     replenish_below: int = DEFAULT_POOL_THRESHOLD,
+    include_regions: bool = True,
 ) -> tuple[int, int]:
-    """Create country-level pool targets before desktop users request them."""
+    """Create every global country target and supported P1/P2 region target."""
     target_count = max(1, int(target_count))
     replenish_below = max(0, min(int(replenish_below), target_count - 1))
+    ensure_global_country_catalog()
+    ensure_p1_region_catalog()
     countries = list(
         ProxyCountryFile.objects.filter(
             active=True,
             provider__active=True,
             provider__code__in=SUPPORTED_DYNAMIC_PROVIDERS,
-        ).select_related("provider")
+        ).values_list("provider__code", "country_code")
+    )
+    regions = (
+        list(
+            ProxyRegionCatalog.objects.filter(
+                active=True,
+                provider__active=True,
+                provider__code__in=("P1", "P2"),
+            ).values_list("provider__code", "country_code", "region_code")
+        )
+        if include_regions
+        else []
     )
     bundles = (
         ConfigBundle.objects.filter(active=True, clients__active=True)
@@ -152,24 +174,62 @@ def ensure_pool_targets(
     available_targets = 0
     for bundle in bundles:
         config = bundle.get_payload()
-        for country in countries:
-            provider_code = country.provider.code.upper()
-            if not provider_is_configured(provider_code, config):
-                continue
-            _target, was_created = ProxyPoolTarget.objects.get_or_create(
+        configured = {
+            code
+            for code in SUPPORTED_DYNAMIC_PROVIDERS
+            if provider_is_configured(code, config)
+        }
+        desired = {
+            (provider_code.upper(), country_code.upper(), "", "")
+            for provider_code, country_code in countries
+            if provider_code.upper() in configured
+        }
+        desired.update(
+            (
+                provider_code.upper(),
+                country_code.upper(),
+                str(region_code),
+                "",
+            )
+            for provider_code, country_code, region_code in regions
+            if provider_code.upper() in configured
+        )
+        existing = set(
+            ProxyPoolTarget.objects.filter(config_bundle=bundle).values_list(
+                "provider_code", "country_code", "region", "city"
+            )
+        )
+        missing = [
+            ProxyPoolTarget(
                 config_bundle=bundle,
                 provider_code=provider_code,
-                country_code=country.country_code.upper(),
-                region="",
-                city="",
-                defaults={
-                    "target_count": target_count,
-                    "replenish_below": replenish_below,
-                    "active": True,
-                },
+                country_code=country_code,
+                region=region,
+                city=city,
+                target_count=target_count,
+                replenish_below=replenish_below,
+                active=True,
             )
-            created += int(was_created)
-            available_targets += 1
+            for provider_code, country_code, region, city in desired - existing
+        ]
+        ProxyPoolTarget.objects.bulk_create(
+            missing,
+            batch_size=500,
+            ignore_conflicts=True,
+        )
+        if missing:
+            ProxyPoolTarget.objects.filter(
+                config_bundle=bundle,
+                provider_code__in=configured,
+            ).filter(
+                Q(target_count__lt=target_count)
+                | Q(replenish_below__lt=replenish_below)
+            ).update(
+                target_count=target_count,
+                replenish_below=replenish_below,
+            )
+        created += len(missing)
+        available_targets += len(desired)
     return created, available_targets
 
 
@@ -260,16 +320,34 @@ def generate_proxy_job(self, job_id: int) -> None:
 
 @shared_task
 def maintain_proxy_pools(force: bool = False) -> int:
-    """Create missing country pools and refill low inventory in the background."""
+    """Create global pools and refill low country/region inventory."""
     ensure_pool_targets()
     queued = 0
-    targets = ProxyPoolTarget.objects.filter(active=True).select_related("config_bundle")
+    targets = (
+        ProxyPoolTarget.objects.filter(active=True)
+        .select_related("config_bundle")
+        .annotate(
+            available_count=Count(
+                "entries", filter=Q(entries__state="available")
+            )
+        )
+    )
+    configs: dict[int, dict] = {}
     for target in targets:
-        config = target.config_bundle.get_payload()
+        config = configs.get(target.config_bundle_id)
+        if config is None:
+            config = target.config_bundle.get_payload()
+            configs[target.config_bundle_id] = config
         if not provider_is_configured(target.provider_code, config):
             continue
-        available = target.entries.filter(state="available").count()
+        available = int(target.available_count)
         if force or available <= target.replenish_below:
             refill_proxy_pool.delay(target.pk)
             queued += 1
     return queued
+
+
+@shared_task
+def sync_proxy_geography() -> dict[str, int]:
+    """Refresh provider country/state metadata before the morning prefill."""
+    return sync_provider_geography()

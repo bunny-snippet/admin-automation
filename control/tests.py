@@ -4,6 +4,7 @@ import io
 import json
 import zipfile
 from datetime import timedelta
+from unittest import mock
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -506,13 +507,42 @@ class ProxyPoolTaskTests(TestCase):
     def test_configured_country_targets_are_created_before_app_requests(self):
         created, configured = ensure_pool_targets(target_count=5, replenish_below=2)
 
-        self.assertEqual(created, 1)
-        self.assertEqual(configured, 1)
-        target = ProxyPoolTarget.objects.get()
+        self.assertGreaterEqual(created, 249)
+        self.assertEqual(configured, created)
+        self.assertEqual(
+            ProxyCountryFile.objects.filter(provider__code="P2").count(),
+            249,
+        )
+        target = ProxyPoolTarget.objects.get(provider_code="P2", country_code="US")
         self.assertEqual(target.provider_code, "P2")
         self.assertEqual(target.country_code, "US")
         self.assertEqual(target.target_count, 5)
         self.assertEqual(target.replenish_below, 2)
+
+    def test_p1_vps_environment_credentials_create_global_and_state_targets(self):
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "NIMBLE_ACCOUNT_NAME": "account",
+                "NIMBLE_PIPELINE_NAME": "pipeline",
+                "NIMBLE_PIPELINE_PASSWORD": "password",
+            },
+            clear=False,
+        ):
+            ensure_pool_targets(target_count=5, replenish_below=2)
+
+        self.assertEqual(
+            ProxyPoolTarget.objects.filter(provider_code="P1", region="").count(),
+            249,
+        )
+        self.assertTrue(
+            ProxyPoolTarget.objects.filter(
+                provider_code="P1", country_code="US", region="CA"
+            ).exists()
+        )
+        self.assertFalse(
+            ProxyPoolTarget.objects.filter(provider_code="P3", region__gt="").exists()
+        )
 
     def test_p2_generation_uses_country_session_and_explicit_protocol(self):
         lines = _generate(

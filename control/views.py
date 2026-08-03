@@ -23,7 +23,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from .models import (
     BootstrapAudit, ClientAccess, ExtensionPackage, ProfileActivity, ProfileDomainActivity, Provider, ProxyCountryFile,
-    ProxyGenerationJob, ProxyReservation,
+    ProxyGenerationJob, ProxyReservation, ProxyRegionCatalog,
 )
 from .proxy_jobs import get_or_create_pool_target, reserve_pool_proxies, reserve_static_proxies
 from .tasks import refill_proxy_pool
@@ -139,11 +139,28 @@ def _catalog() -> list[dict[str, Any]]:
     active_files = ProxyCountryFile.objects.filter(active=True).only(
         "provider_id", "country_code", "country_name", "version", "content_sha256"
     )
-    providers = Provider.objects.filter(active=True).prefetch_related(
-        Prefetch("country_files", queryset=active_files)
+    active_regions = ProxyRegionCatalog.objects.filter(active=True).only(
+        "provider_id", "country_code", "region_code", "region_name"
     )
-    return [
-        {
+    providers = Provider.objects.filter(active=True).prefetch_related(
+        Prefetch("country_files", queryset=active_files),
+        Prefetch("region_catalog", queryset=active_regions),
+    )
+    result: list[dict[str, Any]] = []
+    for provider in providers:
+        country_files = list(provider.country_files.all())
+        if not country_files:
+            continue
+        regions_by_country: dict[str, list[dict[str, str]]] = {}
+        if provider.code in {"P1", "P2"}:
+            for region in provider.region_catalog.all():
+                regions_by_country.setdefault(region.country_code, []).append(
+                    {
+                        "id": region.region_code,
+                        "name": region.region_name,
+                    }
+                )
+        result.append({
             "id": provider.code,
             "name": provider.display_name,
             "countries": [
@@ -152,13 +169,12 @@ def _catalog() -> list[dict[str, Any]]:
                     "name": row.country_name,
                     "version": row.version,
                     "sha256": row.content_sha256,
+                    "regions": regions_by_country.get(row.country_code, []),
                 }
-                for row in provider.country_files.all()
+                for row in country_files
             ],
-        }
-        for provider in providers
-        if provider.country_files.all()
-    ]
+        })
+    return result
 
 
 @require_GET
@@ -509,6 +525,17 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
         requested_count = int(body.get("count") or 1)
         if not provider_code or not country_code or not 1 <= requested_count <= 50:
             raise ValueError("Invalid proxy request")
+        city = ""
+        if provider_code not in {"P1", "P2"}:
+            region = ""
+        elif region and not ProxyRegionCatalog.objects.filter(
+            provider__code=provider_code,
+            provider__active=True,
+            country_code=country_code,
+            region_code=region,
+            active=True,
+        ).exists():
+            raise ValueError("Unsupported provider region")
     except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError,
             signing.BadSignature, signing.SignatureExpired, ClientAccess.DoesNotExist):
         return _json_response({"allowed": False, "message": "Access denied."}, status=403)

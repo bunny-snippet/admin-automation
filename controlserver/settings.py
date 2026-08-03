@@ -196,6 +196,10 @@ CELERY_BEAT_SCHEDULE = {
         "task": "control.tasks.maintain_proxy_pools",
         "schedule": 60.0,
     },
+    "morning-provider-geography-sync": {
+        "task": "control.tasks.sync_proxy_geography",
+        "schedule": crontab(hour=5, minute=10),
+    },
     "morning-proxy-pool-prefill": {
         "task": "control.tasks.maintain_proxy_pools",
         "schedule": crontab(hour=5, minute=30),

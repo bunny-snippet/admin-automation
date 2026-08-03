@@ -138,6 +138,35 @@ class ProxyCountryFile(models.Model):
         return decrypt_text(self.content_ciphertext) if self.content_ciphertext else ""
 
 
+class ProxyRegionCatalog(models.Model):
+    provider = models.ForeignKey(
+        Provider,
+        on_delete=models.CASCADE,
+        related_name="region_catalog",
+    )
+    country_code = models.CharField(max_length=32, validators=[catalog_id_validator])
+    region_code = models.CharField(max_length=120)
+    region_name = models.CharField(max_length=160)
+    source = models.CharField(max_length=40, blank=True, default="")
+    active = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("provider__display_order", "country_code", "region_name")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("provider", "country_code", "region_code"),
+                name="unique_provider_country_region",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return (
+            f"{self.provider.code} / {self.country_code} / "
+            f"{self.region_name}"
+        )
+
+
 class ExtensionPackage(models.Model):
     name = models.CharField(max_length=120, unique=True)
     filename = models.CharField(max_length=180)
