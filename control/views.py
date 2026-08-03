@@ -26,7 +26,7 @@ from .models import (
     ProxyGenerationJob, ProxyReservation,
 )
 from .proxy_jobs import get_or_create_pool_target, reserve_pool_proxies, reserve_static_proxies
-from .tasks import generate_proxy_job, refill_proxy_pool
+from .tasks import refill_proxy_pool
 from .openapi import OPENAPI_SCHEMA, SWAGGER_HTML
 
 
@@ -442,25 +442,39 @@ def _authenticated_client(request: HttpRequest) -> ClientAccess:
     return client
 
 
+def _proxy_protocol(value: str) -> str:
+    prefix = str(value or "").strip().partition("://")[0].casefold()
+    if "://" not in str(value or ""):
+        return ""
+    return {
+        "http": "http",
+        "https": "https",
+        "socks5": "socks5",
+        "socks5h": "socks5",
+    }.get(prefix, "")
+
+
 def _job_payload(job: ProxyGenerationJob) -> dict[str, Any]:
     reservations = job.reservations.order_by("reserved_at", "pk")
+    proxies = []
+    for item in reservations:
+        value = item.get_proxy()
+        proxies.append({
+            "reservation_id": item.pk,
+            "proxy": value,
+            "protocol": _proxy_protocol(value),
+            "provider": item.provider_code,
+            "country": item.country_code,
+            "region": item.region,
+            "city": item.city,
+        })
     return {
         "id": job.pk,
         "status": job.status,
         "requested_count": job.requested_count,
         "ready_count": job.ready_count,
         "error": job.error,
-        "proxies": [
-            {
-                "reservation_id": item.pk,
-                "proxy": item.get_proxy(),
-                "provider": item.provider_code,
-                "country": item.country_code,
-                "region": item.region,
-                "city": item.city,
-            }
-            for item in reservations
-        ],
+        "proxies": proxies,
     }
 
 
@@ -517,15 +531,15 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
         elif job.ready_count:
             job.status = "partial"
         else:
-            # A worker will later try provider generation. The state is explicit
-            # so the app can poll without silently treating this as completion.
+            # The background pool worker will attach ready sessions to this job.
             job.status = "waiting_generation"
         job.save(update_fields=("ready_count", "status", "updated_at"))
         if settings.CELERY_BROKER_URL:
-            target = get_or_create_pool_target(client=client, provider_code=provider_code, country_code=country_code, region=region, city=city)
+            target = get_or_create_pool_target(
+                client=client, provider_code=provider_code,
+                country_code=country_code, region=region, city=city,
+            )
             transaction.on_commit(lambda target_id=target.pk: refill_proxy_pool.delay(target_id))
-            if job.ready_count < job.requested_count:
-                transaction.on_commit(lambda: generate_proxy_job.delay(job.pk))
     return _json_response({"allowed": True, "job": _job_payload(job)}, status=201)
 
 

@@ -13,9 +13,12 @@ from django.utils import timezone
 
 from .admin import import_catalog_zip
 from .models import (
-    ClientAccess, ConfigBundle, ProfileDomainActivity, Provider,
-    ProxyCountryFile, ProxyReservation,
+    ClientAccess, ConfigBundle, ExtensionPackage, ProfileDomainActivity,
+    Provider, ProxyCountryFile, ProxyGenerationJob, ProxyPoolTarget,
+    ProxyReservation,
 )
+from .proxy_jobs import reserve_pool_proxies
+from .tasks import _generate, ensure_pool_targets, refill_proxy_pool
 
 
 @override_settings(
@@ -170,6 +173,32 @@ class ControlApiTests(TestCase):
         self.assertEqual(payload["catalog"]["providers"][0]["id"], "P1")
         self.assertEqual(response["Cache-Control"], "no-store, no-cache, must-revalidate, private")
 
+    def test_bootstrap_delivers_active_extension_and_authenticated_zip(self):
+        package = ExtensionPackage(
+            name="Audit extension",
+            filename="audit-extension.zip",
+            version=3,
+            active=True,
+            status=True,
+            is_top=True,
+        )
+        package.set_package(b"PK\x03\x04test-extension")
+        package.save()
+
+        bootstrap = self.bootstrap().json()
+        row = bootstrap["catalog"]["extensions"][0]
+        self.assertEqual(row["id"], package.pk)
+        self.assertTrue(row["status"])
+        self.assertTrue(row["is_top"])
+        response = self.client.get(
+            reverse("control:extension-package", args=(package.pk,)),
+            HTTP_AUTHORIZATION=f"Bearer {bootstrap['access_token']}",
+            HTTP_X_DEVICE_ID="device-one",
+            REMOTE_ADDR="203.0.113.10",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b"PK\x03\x04test-extension")
+
     def test_same_public_ip_can_have_multiple_authorized_systems(self):
         ClientAccess.objects.create(
             name="Office system 2",
@@ -283,6 +312,28 @@ class ControlApiTests(TestCase):
             content_type="application/json", **headers,
         )
         self.assertEqual(activity.status_code, 201)
+
+    def test_proxy_job_returns_per_line_socks5_protocol(self):
+        country = ProxyCountryFile(
+            provider=self.provider,
+            country_code="CA",
+            country_name="Canada",
+        )
+        country.set_content("socks5://user:pass@proxy.example:1080\n")
+        country.save()
+        token = self.bootstrap().json()["access_token"]
+        response = self.client.post(
+            reverse("control:proxy-job-create"),
+            data=json.dumps({"provider": "P1", "country": "CA", "count": 1}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+            HTTP_X_DEVICE_ID="device-one",
+            REMOTE_ADDR="203.0.113.10",
+        )
+        self.assertEqual(response.status_code, 201)
+        proxy = response.json()["job"]["proxies"][0]
+        self.assertEqual(proxy["protocol"], "socks5")
+        self.assertEqual(proxy["proxy"], "socks5://user:pass@proxy.example:1080")
 
     def test_profile_domain_batch_is_sanitized_idempotent_and_filterable(self):
         token = self.bootstrap().json()["access_token"]
@@ -420,6 +471,108 @@ class ControlApiTests(TestCase):
         docs_response = self.client.get(reverse("control:swagger-docs"))
         self.assertEqual(docs_response.status_code, 200)
         self.assertContains(docs_response, "SwaggerUIBundle")
+
+
+class ProxyPoolTaskTests(TestCase):
+    def setUp(self):
+        self.bundle = ConfigBundle(name="Pool config", version=1)
+        self.bundle.set_payload(
+            {
+                "P2_API_USERNAME": "proxy-user",
+                "P2_API_PASSWORD": "proxy-password",
+                "P2_PROTOCOL": "socks5",
+            }
+        )
+        self.bundle.save()
+        self.client_access = ClientAccess.objects.create(
+            name="Pool device",
+            ipv4="203.0.113.70",
+            device_id="pool-device",
+            office_name="Pool office",
+            system_number="1",
+            config_bundle=self.bundle,
+        )
+        self.provider = Provider.objects.create(
+            code="P2", display_name="P2", display_order=2
+        )
+        self.country = ProxyCountryFile(
+            provider=self.provider,
+            country_code="US",
+            country_name="United States",
+        )
+        self.country.set_content("")
+        self.country.save()
+
+    def test_configured_country_targets_are_created_before_app_requests(self):
+        created, configured = ensure_pool_targets(target_count=5, replenish_below=2)
+
+        self.assertEqual(created, 1)
+        self.assertEqual(configured, 1)
+        target = ProxyPoolTarget.objects.get()
+        self.assertEqual(target.provider_code, "P2")
+        self.assertEqual(target.country_code, "US")
+        self.assertEqual(target.target_count, 5)
+        self.assertEqual(target.replenish_below, 2)
+
+    def test_p2_generation_uses_country_session_and_explicit_protocol(self):
+        lines = _generate(
+            "P2",
+            "US",
+            "",
+            "",
+            2,
+            self.bundle.get_payload(),
+        )
+
+        self.assertEqual(len(lines), 2)
+        self.assertTrue(lines[0].startswith("socks5://"))
+        self.assertIn("_c_US_s_", lines[0])
+        self.assertTrue(lines[0].endswith("@pool.infatica.io:10000"))
+        self.assertTrue(lines[1].endswith("@pool.infatica.io:10001"))
+
+    def test_refill_fills_target_and_progressively_completes_waiting_job(self):
+        target = ProxyPoolTarget.objects.create(
+            config_bundle=self.bundle,
+            provider_code="P2",
+            country_code="US",
+            target_count=5,
+            replenish_below=2,
+        )
+        job = ProxyGenerationJob.objects.create(
+            client=self.client_access,
+            provider_code="P2",
+            country_code="US",
+            requested_count=3,
+            status="waiting_generation",
+        )
+
+        created = refill_proxy_pool.run(target.pk)
+
+        job.refresh_from_db()
+        self.assertEqual(created, 5)
+        self.assertEqual(job.status, "ready")
+        self.assertEqual(job.ready_count, 3)
+        self.assertEqual(job.reservations.count(), 3)
+        self.assertEqual(target.entries.filter(state="available").count(), 2)
+
+        second = ProxyGenerationJob.objects.create(
+            client=self.client_access,
+            provider_code="P2",
+            country_code="US",
+            requested_count=2,
+            status="queued",
+        )
+        issued = reserve_pool_proxies(
+            client=self.client_access,
+            job=second,
+            provider_code="P2",
+            country_code="US",
+        )
+        self.assertEqual(len(issued), 2)
+        self.assertEqual(target.entries.filter(state="available").count(), 0)
+
+        self.assertEqual(refill_proxy_pool.run(target.pk), 5)
+        self.assertEqual(target.entries.filter(state="available").count(), 5)
 
 
 class StaffPanelTests(TestCase):
