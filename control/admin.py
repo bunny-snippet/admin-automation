@@ -31,7 +31,14 @@ class ConfigBundleForm(forms.ModelForm):
 
     class Meta:
         model = ConfigBundle
-        fields = ("name", "version", "active", "payload_json")
+        fields = (
+            "name",
+            "version",
+            "active",
+            "browser_group_id",
+            "browser_group_name",
+            "payload_json",
+        )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -231,8 +238,16 @@ def import_catalog_zip(upload, only_provider: str | None = None) -> tuple[int, i
 @admin.register(ConfigBundle)
 class ConfigBundleAdmin(admin.ModelAdmin):
     form = ConfigBundleForm
-    list_display = ("name", "version", "active", "updated_at")
+    list_display = (
+        "name",
+        "version",
+        "browser_group_name",
+        "browser_group_id",
+        "active",
+        "updated_at",
+    )
     list_filter = ("active",)
+    search_fields = ("name", "browser_group_name", "browser_group_id")
 
 
 @admin.register(ClientAccess)
@@ -243,12 +258,20 @@ class ClientAccessAdmin(admin.ModelAdmin):
         "device_id",
         "office_name",
         "system_number",
+        "profile_name",
         "config_bundle",
         "active",
         "last_seen_at",
     )
     list_filter = ("active", "office_name", "config_bundle")
-    search_fields = ("name", "ipv4", "device_id", "office_name", "system_number")
+    search_fields = (
+        "name",
+        "ipv4",
+        "device_id",
+        "office_name",
+        "system_number",
+        "profile_name",
+    )
 
 
 @admin.register(Provider)

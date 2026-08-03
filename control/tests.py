@@ -24,7 +24,12 @@ from .models import (
 )
 class ControlApiTests(TestCase):
     def setUp(self):
-        self.bundle = ConfigBundle(name="Office config", version=7)
+        self.bundle = ConfigBundle(
+            name="Office config",
+            version=7,
+            browser_group_id="2255",
+            browser_group_name="Testing",
+        )
         self.bundle.set_payload(
             {
                 "APP_API_KEY": "browser-secret",
@@ -39,6 +44,7 @@ class ControlApiTests(TestCase):
             device_id="device-one",
             office_name="1115",
             system_number="1",
+            profile_name="Device Alpha",
             config_bundle=self.bundle,
         )
         self.provider = Provider.objects.create(
@@ -147,6 +153,17 @@ class ControlApiTests(TestCase):
         self.assertEqual(payload["tubelight_config"]["OFFICE_NAME"], "1115")
         self.assertEqual(payload["tubelight_config"]["SYSTEM_NUMBER"], "1")
         self.assertEqual(payload["tubelight_config"]["APP_API_KEY"], "browser-secret")
+        self.assertEqual(payload["tubelight_config"]["BROWSER_GROUP_ID"], "2255")
+        self.assertEqual(payload["tubelight_config"]["BROWSER_GROUP_NAME"], "Testing")
+        self.assertEqual(payload["tubelight_config"]["DEVICE_PROFILE_NAME"], "Device Alpha")
+        self.assertEqual(
+            payload["assignment"],
+            {
+                "browser_group_id": "2255",
+                "browser_group_name": "Testing",
+                "profile_name": "Device Alpha",
+            },
+        )
         self.assertEqual(payload["catalog"]["providers"][0]["id"], "P1")
         self.assertEqual(response["Cache-Control"], "no-store, no-cache, must-revalidate, private")
 
@@ -157,11 +174,31 @@ class ControlApiTests(TestCase):
             device_id="device-two",
             office_name="1115",
             system_number="2",
+            profile_name="Device Beta",
             config_bundle=self.bundle,
         )
         response = self.bootstrap(device_id="device-two")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["tubelight_config"]["SYSTEM_NUMBER"], "2")
+        self.assertEqual(
+            response.json()["tubelight_config"]["DEVICE_PROFILE_NAME"],
+            "Device Beta",
+        )
+
+    def test_assignment_defaults_to_testing_and_client_name(self):
+        self.bundle.browser_group_id = ""
+        self.bundle.browser_group_name = ""
+        self.bundle.save(update_fields=("browser_group_id", "browser_group_name"))
+        self.client_access.profile_name = ""
+        self.client_access.save(update_fields=("profile_name",))
+
+        response = self.bootstrap()
+
+        self.assertEqual(response.status_code, 200)
+        config = response.json()["tubelight_config"]
+        self.assertEqual(config["BROWSER_GROUP_ID"], "")
+        self.assertEqual(config["BROWSER_GROUP_NAME"], "Testing")
+        self.assertEqual(config["DEVICE_PROFILE_NAME"], "Office system 1")
 
     def test_ip_only_entry_accepts_blank_device_id(self):
         ClientAccess.objects.create(

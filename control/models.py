@@ -20,6 +20,17 @@ class ConfigBundle(models.Model):
     name = models.CharField(max_length=120, unique=True)
     version = models.PositiveIntegerField(default=1)
     active = models.BooleanField(default=True)
+    browser_group_id = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        help_text="Numeric browser group ID assigned to every device using this bundle.",
+    )
+    browser_group_name = models.CharField(
+        max_length=160,
+        default="Testing",
+        help_text="Browser group name used for display and as a fallback when no ID is set.",
+    )
     payload_ciphertext = models.TextField(blank=True, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -49,6 +60,12 @@ class ClientAccess(models.Model):
     active = models.BooleanField(default=True)
     office_name = models.CharField(max_length=64)
     system_number = models.CharField(max_length=32)
+    profile_name = models.CharField(
+        max_length=160,
+        blank=True,
+        default="",
+        help_text="Fixed browser profile name for this device. Defaults to the access-record name.",
+    )
     config_bundle = models.ForeignKey(
         ConfigBundle,
         on_delete=models.PROTECT,

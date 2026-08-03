@@ -297,8 +297,14 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
             status=503,
         )
 
+    group_id = client.config_bundle.browser_group_id.strip()
+    group_name = client.config_bundle.browser_group_name.strip() or "Testing"
+    profile_name = client.profile_name.strip() or client.name.strip()
     config["OFFICE_NAME"] = client.office_name
     config["SYSTEM_NUMBER"] = client.system_number
+    config["BROWSER_GROUP_ID"] = group_id
+    config["BROWSER_GROUP_NAME"] = group_name
+    config["DEVICE_PROFILE_NAME"] = profile_name
     token_payload = {
         "client_id": client.pk,
         "ip": access_ip,
@@ -327,6 +333,11 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
             "expires_in": settings.BOOTSTRAP_TOKEN_MAX_AGE,
             "access_token": token,
             "tubelight_config": config,
+            "assignment": {
+                "browser_group_id": group_id,
+                "browser_group_name": group_name,
+                "profile_name": profile_name,
+            },
             "catalog": {"providers": _catalog(), "extensions": [
                 {"id": item.pk, "name": item.name, "filename": item.filename,
                  "version": item.version, "sha256": item.package_sha256,

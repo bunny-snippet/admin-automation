@@ -438,6 +438,29 @@
           "countries"
         ]
       },
+      "BootstrapAssignment": {
+        "type": "object",
+        "description": "Server-authoritative browser group and per-device profile label.",
+        "properties": {
+          "browser_group_id": {
+            "type": "string",
+            "description": "Numeric browser group ID. May be blank only for the Testing-name fallback."
+          },
+          "browser_group_name": {
+            "type": "string",
+            "default": "Testing"
+          },
+          "profile_name": {
+            "type": "string",
+            "description": "Fixed profile name assigned to the authorized device."
+          }
+        },
+        "required": [
+          "browser_group_id",
+          "browser_group_name",
+          "profile_name"
+        ]
+      },
       "BootstrapResponse": {
         "type": "object",
         "properties": {
@@ -461,6 +484,9 @@
             "type": "object",
             "additionalProperties": true
           },
+          "assignment": {
+            "$ref": "#/components/schemas/BootstrapAssignment"
+          },
           "catalog": {
             "type": "object",
             "properties": {
@@ -483,6 +509,7 @@
           "expires_in",
           "access_token",
           "tubelight_config",
+          "assignment",
           "catalog"
         ]
       },
