@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Iterable
 
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
 from .models import (
@@ -19,6 +19,14 @@ from .models import (
 def proxy_fingerprint(value: str) -> str:
     """Stable, secret-free identifier for a proxy line."""
     return hashlib.sha256(value.strip().encode("utf-8")).hexdigest()
+
+
+
+def _locked(queryset):
+    """Avoid serialising independent client reservations on MySQL 8+."""
+    if connection.features.has_select_for_update_skip_locked:
+        return queryset.select_for_update(skip_locked=True)
+    return queryset.select_for_update()
 
 
 def usable_lines(content: str) -> Iterable[str]:
@@ -40,8 +48,7 @@ def reserve_static_proxies(
 ) -> list[ProxyReservation]:
     """Reserve never-before-issued lines from a country's encrypted catalog."""
     source = (
-        ProxyCountryFile.objects.select_related("provider")
-        .select_for_update()
+        _locked(ProxyCountryFile.objects.select_related("provider"))
         .filter(
             provider__code=provider_code,
             provider__active=True,
@@ -91,7 +98,7 @@ def reserve_pool_proxies(
     if not remaining:
         return []
     entries = (
-        ProxyPoolEntry.objects.select_for_update()
+        _locked(ProxyPoolEntry.objects)
         .filter(
             target__config_bundle=client.config_bundle,
             target__provider_code=provider_code,

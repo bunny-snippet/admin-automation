@@ -14,12 +14,14 @@
   const endpoints = {
     overview: app.dataset.overviewUrl,
     domains: app.dataset.domainUrl,
+    suspicious: app.dataset.suspiciousUrl,
     export: app.dataset.domainExportUrl,
     resource: app.dataset.resourceUrl,
   };
   const labels = {
     overview: ["Overview", "Operations overview"],
     domains: ["Domain activity", "Domain activity intelligence"],
+    suspicious: ["Suspicious activity", "Monitored-domain alerts"],
     devices: ["Devices", "Devices and access"],
     configurations: ["Config bundles", "Configuration bundles"],
     groups: ["Browser groups", "Browser group mapping"],
@@ -188,6 +190,7 @@
         ${metricCard("Profiles opened", data.cards.profiles_opened_24h, "Completed in the last 24 hours")}
         ${metricCard("Domain visits", data.cards.domain_visits_24h, `${number(data.cards.unique_domains_24h)} unique domains`)}
         ${metricCard("Available proxies", data.cards.available_proxies, "Ready in managed pools")}
+        ${metricCard("Suspicious activity", data.cards.suspicious_activity_24h, "Monitored-domain matches")}
       </div>
       <div class="dashboard-grid">
         <div class="dashboard-stack">
@@ -449,12 +452,39 @@
     }
   }
 
+  async function loadSuspicious() {
+    const params = new URLSearchParams({ range: "7d", page: "1", page_size: "25" });
+    const data = await api(`${endpoints.suspicious}?${params}`);
+    content.innerHTML = `
+      <div class="page-intro">
+        <div>
+          <span class="eyebrow">Monitored-domain alerts</span>
+          <h2>Suspicious activity</h2>
+          <p>Every monitored-domain match, with the device, office, profile, group, IP and exact timestamps.</p>
+        </div>
+        <a class="button button-secondary" href="${e(data.monitor_admin_url)}">Manage monitored domains</a>
+      </div>
+      <div class="metric-grid">
+        ${metricCard("Alerts", data.metrics.records, `${number(data.metrics.domains)} monitored domains`)}
+        ${metricCard("Visits", data.metrics.visits, `${number(data.metrics.clients)} devices`)}
+        ${metricCard("Profiles", data.metrics.profiles, `${number(data.metrics.sessions)} sessions`)}
+      </div>
+      <article class="panel-card">
+        <div class="panel-header"><div><h3>Monitored-domain matches</h3><p>${number(data.pagination.total)} records</p></div></div>
+        <div class="panel-body-flush">${domainTable(data.rows)}</div>
+        ${pagination(data.pagination, "suspicious")}
+      </article>`;
+    bindDomainDetails();
+    bindPagination("suspicious");
+  }
+
   async function loadCurrent() {
     loading();
     refreshButton.disabled = true;
     try {
       if (state.route === "overview") await loadOverview();
       else if (state.route === "domains") await loadDomains();
+      else if (state.route === "suspicious") await loadSuspicious();
       else await loadResource();
     } catch (error) {
       showError(error);

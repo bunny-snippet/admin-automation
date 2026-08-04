@@ -21,6 +21,7 @@ from .models import (
     ExtensionPackage,
     ProfileActivity,
     ProfileDomainActivity,
+    MonitoredDomain,
     Provider,
     ProxyGenerationJob,
     ProxyPoolEntry,
@@ -156,6 +157,12 @@ def domain_row(row: ProfileDomainActivity) -> dict[str, Any]:
     }
 
 
+def suspicious_queryset(request: HttpRequest):
+    queryset, start, end, preset = domain_queryset(request)
+    monitored = list(
+        MonitoredDomain.objects.filter(active=True).values_list("domain", flat=True)
+    )
+    return queryset.filter(domain__in=monitored), start, end, preset, monitored
 @staff_member_required(login_url="admin:login")
 @require_GET
 def panel(request: HttpRequest) -> HttpResponse:
@@ -201,6 +208,15 @@ def panel_overview_api(request: HttpRequest) -> JsonResponse:
             "client", "job", "reservation"
         ).order_by("-last_visited_at")[:8]
     ]
+    monitored_domains = list(
+        MonitoredDomain.objects.filter(active=True).values_list("domain", flat=True)
+    )
+    suspicious_recent = [
+        domain_row(row)
+        for row in ProfileDomainActivity.objects.select_related("client")
+        .filter(domain__in=monitored_domains, last_visited_at__gte=since)
+        .order_by("-last_visited_at")[:8]
+    ]
     office_rows = ClientAccess.objects.values("office_name").annotate(
         devices=Count("id"),
         active_devices=Count("id", filter=Q(active=True)),
@@ -231,6 +247,9 @@ def panel_overview_api(request: HttpRequest) -> JsonResponse:
                 "unique_domains_24h": domain_totals["domains"] or 0,
                 "sessions_24h": domain_totals["sessions"] or 0,
                 "available_proxies": pool_status.get("available", 0),
+                "suspicious_activity_24h": ProfileDomainActivity.objects.filter(
+                    domain__in=monitored_domains, last_visited_at__gte=since
+                ).count(),
             },
             "job_status": job_status,
             "pool_status": pool_status,
@@ -240,6 +259,8 @@ def panel_overview_api(request: HttpRequest) -> JsonResponse:
                 "denied": bootstrap_status["denied_count"],
             },
             "recent_domains": recent_domains,
+            "suspicious_recent": suspicious_recent,
+            "monitored_domains": monitored_domains,
             "offices": offices,
             "management": [
                 {"key": "devices", "label": "Devices", "count": ClientAccess.objects.count(), "description": "Whitelisted systems and assignments"},
@@ -251,6 +272,39 @@ def panel_overview_api(request: HttpRequest) -> JsonResponse:
     )
 
 
+@staff_member_required(login_url="admin:login")
+@require_GET
+def panel_suspicious_activity_api(request: HttpRequest) -> JsonResponse:
+    queryset, start, end, preset, monitored = suspicious_queryset(request)
+    aggregate = queryset.aggregate(
+        records=Count("id"),
+        visits=Sum("visit_count"),
+        domains=Count("domain", distinct=True),
+        clients=Count("client_id", distinct=True),
+        profiles=Count("profile_id", distinct=True),
+        sessions=Count("session_id", distinct=True),
+    )
+    queryset = queryset.order_by("-last_visited_at", "-id")
+    page_size = bounded_int(request.GET.get("page_size"), 25, 10, 100)
+    paginator = Paginator(queryset, page_size)
+    page = paginator.get_page(
+        bounded_int(request.GET.get("page"), 1, 1, 1000000)
+    )
+    return panel_json({
+        "range": {"preset": preset, "from": iso(start), "to": iso(end)},
+        "monitored_domains": monitored,
+        "metrics": {
+            key: aggregate[key] or 0
+            for key in ("records", "visits", "domains", "clients", "profiles", "sessions")
+        },
+        "rows": [domain_row(row) for row in page.object_list],
+        "pagination": {
+            "page": page.number, "pages": paginator.num_pages,
+            "page_size": page_size, "total": paginator.count,
+            "has_previous": page.has_previous(), "has_next": page.has_next(),
+        },
+        "monitor_admin_url": reverse("admin:control_monitoreddomain_changelist"),
+    })
 @staff_member_required(login_url="admin:login")
 @require_GET
 def panel_domain_activity_api(request: HttpRequest) -> JsonResponse:

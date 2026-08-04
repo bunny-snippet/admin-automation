@@ -13,6 +13,7 @@
   <div class="app-shell" id="panel-app"
        data-overview-url="{% url 'control:panel-overview-api' %}"
        data-domain-url="{% url 'control:panel-domain-activity-api' %}"
+       data-suspicious-url="{% url 'control:panel-suspicious-activity-api' %}"
        data-domain-export-url="{% url 'control:panel-domain-activity-export' %}"
        data-resource-url="{% url 'control:panel-resource-api' resource='__resource__' %}">
     <aside class="sidebar" aria-label="Primary navigation">
@@ -36,6 +37,9 @@
           </button>
           <button class="nav-item" data-route="domains">
             <span class="nav-icon">DA</span><span>Domain activity</span>
+          </button>
+          <button class="nav-item" data-route="suspicious">
+            <span class="nav-icon">SA</span><span>Suspicious activity</span>
           </button>
         </div>
 

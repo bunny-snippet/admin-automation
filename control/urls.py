@@ -13,6 +13,11 @@ urlpatterns = [
         name="panel-overview-api",
     ),
     path(
+        "panel/api/suspicious-activity/",
+        panel_views.panel_suspicious_activity_api,
+        name="panel-suspicious-activity-api",
+    ),
+    path(
         "panel/api/domain-activity/",
         panel_views.panel_domain_activity_api,
         name="panel-domain-activity-api",

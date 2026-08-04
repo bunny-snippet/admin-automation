@@ -365,3 +365,25 @@ class BootstrapAudit(models.Model):
 
     def __str__(self) -> str:
         return f"{self.created_at:%Y-%m-%d %H:%M} / {self.observed_ip} / {self.reason}"
+from django.conf import settings
+class MonitoredDomain(models.Model):
+    domain = models.CharField(max_length=253, unique=True)
+    label = models.CharField(max_length=120, blank=True, default="")
+    active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="monitored_domains",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("domain",)
+        verbose_name = "Monitored domain"
+        verbose_name_plural = "Monitored domains"
+
+    def __str__(self) -> str:
+        return self.domain

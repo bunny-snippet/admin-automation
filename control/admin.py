@@ -19,7 +19,7 @@ from django.urls import path, reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
-from .models import (BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyReservation, ProfileActivity, ProfileDomainActivity, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry, ProxyRegionCatalog)
+from .models import (BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyReservation, ProfileActivity, ProfileDomainActivity, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry, ProxyRegionCatalog)
 
 
 class ConfigBundleForm(forms.ModelForm):
@@ -635,3 +635,15 @@ class ProxyPoolEntryAdmin(admin.ModelAdmin):
     search_fields = ("proxy_fingerprint", "exit_ip", "reserved_client__device_id")
     readonly_fields = ("proxy_fingerprint", "proxy_ciphertext", "created_at", "tested_at", "reserved_at")
     list_select_related = ("target", "reserved_client")
+@admin.register(MonitoredDomain)
+class MonitoredDomainAdmin(admin.ModelAdmin):
+    list_display = ("domain", "label", "active", "created_by", "created_at", "updated_at")
+    list_filter = ("active",)
+    search_fields = ("domain", "label")
+    list_editable = ("active",)
+    readonly_fields = ("created_by", "created_at", "updated_at")
+
+    def save_model(self, request, obj, form, change):
+        if not obj.created_by_id:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)

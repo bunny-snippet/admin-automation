@@ -523,6 +523,10 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
         region = str(body.get("region") or "").strip()[:120]
         city = str(body.get("city") or "").strip()[:120]
         requested_count = int(body.get("count") or 1)
+        if region.casefold() in {"any", "all", "random"}:
+            region = ""
+        if city.casefold() in {"any", "all", "random"}:
+            city = ""
         if not provider_code or not country_code or not 1 <= requested_count <= 50:
             raise ValueError("Invalid proxy request")
         city = ""

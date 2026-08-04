@@ -14,8 +14,8 @@ from django.utils import timezone
 
 from .admin import import_catalog_zip
 from .models import (
-    ClientAccess, ConfigBundle, ExtensionPackage, ProfileDomainActivity,
-    Provider, ProxyCountryFile, ProxyGenerationJob, ProxyPoolTarget,
+    BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, ProfileDomainActivity,
+    MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyPoolTarget,
     ProxyReservation,
 )
 from .proxy_jobs import reserve_pool_proxies
@@ -802,3 +802,15 @@ class StaffPanelTests(TestCase):
         exported = export.content.decode("utf-8")
         self.assertIn("www.example.com", exported)
         self.assertIn("device-panel-one", exported)
+
+    def test_suspicious_activity_uses_active_monitored_domains(self):
+        MonitoredDomain.objects.create(domain="www.example.com", label="Example monitor")
+        self.login()
+        response = self.client.get(
+            reverse("control:panel-suspicious-activity-api"),
+            {"range": "30d"},
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["metrics"]["visits"], 3)
+        self.assertEqual(payload["rows"][0]["domain"], "www.example.com")
