@@ -4,10 +4,13 @@ import json
 import re
 import zipfile
 from pathlib import PurePosixPath
+from urllib.parse import urlencode
 
 
 from django import forms
+from django.conf import settings
 from django.contrib import admin, messages
+from django.core.exceptions import PermissionDenied
 from django.db import transaction
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect
@@ -386,6 +389,7 @@ class BootstrapAuditAdmin(admin.ModelAdmin):
         "allowed",
         "reason",
         "app_version",
+        "whitelist_link",
     )
     list_filter = ("allowed", "reason")
     search_fields = ("observed_ip", "reported_ip", "device_id", "client__name", "app_version")
@@ -399,6 +403,90 @@ class BootstrapAuditAdmin(admin.ModelAdmin):
         "reason",
         "app_version",
     )
+
+    def get_urls(self):
+        custom_urls = [
+            path(
+                "<int:audit_id>/whitelist/",
+                self.admin_site.admin_view(self.whitelist_view),
+                name="control_bootstrapaudit_whitelist",
+            ),
+        ]
+        return custom_urls + super().get_urls()
+
+    @admin.display(description="Access")
+    def whitelist_link(self, obj):
+        url = reverse("admin:control_bootstrapaudit_whitelist", args=(obj.pk,))
+        if obj.client_id:
+            label = "Open access"
+            css = "button"
+        else:
+            label = "Whitelist"
+            css = "button default"
+        return format_html('<a class="{}" href="{}">{}</a>', css, url, label)
+
+    def whitelist_view(self, request, audit_id):
+        audit = get_object_or_404(BootstrapAudit, pk=audit_id)
+        access_ip = (
+            audit.reported_ip
+            if settings.TRUST_APP_REPORTED_IPV4
+            else audit.observed_ip
+        )
+        if not access_ip or not audit.device_id:
+            self.message_user(
+                request,
+                "This audit does not contain the IP and device ID required for whitelisting.",
+                level=messages.ERROR,
+            )
+            return redirect("admin:control_bootstrapaudit_changelist")
+
+        existing = ClientAccess.objects.filter(
+            ipv4=access_ip,
+            device_id=audit.device_id,
+        ).first()
+        if existing:
+            if not request.user.has_perm("control.change_clientaccess"):
+                raise PermissionDenied
+            if existing.active and existing.config_bundle.active:
+                self.message_user(
+                    request,
+                    "This IP and device are already whitelisted.",
+                    level=messages.INFO,
+                )
+            else:
+                self.message_user(
+                    request,
+                    "An access record already exists. Activate it and confirm its configuration before saving.",
+                    level=messages.WARNING,
+                )
+            return redirect("admin:control_clientaccess_change", existing.pk)
+
+        if not request.user.has_perm("control.add_clientaccess"):
+            raise PermissionDenied
+
+        short_device_id = audit.device_id[:12]
+        initial = {
+            "name": f"Device {short_device_id}",
+            "ipv4": access_ip,
+            "device_id": audit.device_id,
+            "active": "1",
+            "profile_name": f"Device {short_device_id}",
+            "notes": (
+                f"Created from Bootstrap Audit #{audit.pk}. "
+                f"Reason: {audit.reason or '-'}; app version: {audit.app_version or '-'}"
+            ),
+        }
+        active_bundles = ConfigBundle.objects.filter(active=True)
+        if active_bundles.count() == 1:
+            initial["config_bundle"] = str(active_bundles.values_list("pk", flat=True).first())
+
+        self.message_user(
+            request,
+            "Confirm the office, system number and configuration, then click Save to whitelist this device.",
+            level=messages.INFO,
+        )
+        add_url = reverse("admin:control_clientaccess_add")
+        return redirect(f"{add_url}?{urlencode(initial)}")
 
     def has_add_permission(self, request):
         return False
