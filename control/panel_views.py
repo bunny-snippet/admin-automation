@@ -332,9 +332,13 @@ def panel_domain_activity_api(request: HttpRequest) -> JsonResponse:
         profiles=Count("profile_id", distinct=True),
         sessions=Count("session_id", distinct=True),
     )
+    local_now = timezone.localtime(timezone.now())
+    day_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = day_start + timedelta(days=1)
     opened_today_qs = ProfileActivity.objects.filter(
-        status__in=("profile_opened", "opened"),
-        created_at__date=timezone.localdate(),
+        status__icontains="open",
+        created_at__gte=day_start,
+        created_at__lt=day_end,
     )
     office = str(request.GET.get("office") or "").strip()
     client_id = str(request.GET.get("client") or "").strip()
@@ -345,7 +349,7 @@ def panel_domain_activity_api(request: HttpRequest) -> JsonResponse:
         opened_today_qs = opened_today_qs.filter(client_id=client_id)
     if group:
         opened_today_qs = opened_today_qs.filter(group_id=group)
-    opened_today = opened_today_qs.values("profile_id").distinct().count()
+    opened_today = opened_today_qs.count()
     top_domains = queryset.values("domain").annotate(
         visits=Sum("visit_count"),
         sessions=Count("session_id", distinct=True),
