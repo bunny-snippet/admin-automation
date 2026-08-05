@@ -20,8 +20,32 @@ from django.utils import timezone
 from django.utils.html import format_html
 
 from .models import (BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyReservation, ProfileActivity, ProfileDomainActivity, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry, ProxyRegionCatalog)
+from .tasks import queue_refill_proxy_pool
 
 
+
+class ProxyPoolGenerateForm(forms.Form):
+    PROVIDER_CHOICES = (("P1", "P1"), ("P2", "P2"), ("P3", "P3"), ("P4", "P4"))
+    provider_codes = forms.MultipleChoiceField(label="Providers", choices=PROVIDER_CHOICES, initial=("P1", "P2", "P3"), widget=forms.CheckboxSelectMultiple)
+    country_codes = forms.CharField(label="Country codes", widget=forms.Textarea(attrs={"rows": 4, "placeholder": "US, UK, AU, CA"}), help_text="Comma, space or newline separated ISO-3166 alpha-2 codes.")
+    config_bundle = forms.ModelChoiceField(label="Config bundle", queryset=ConfigBundle.objects.filter(active=True).order_by("name"))
+    target_count = forms.IntegerField(min_value=1, max_value=5000, initial=1000)
+    replenish_below = forms.IntegerField(min_value=0, max_value=4999, initial=200)
+    purge_existing = forms.BooleanField(required=False, label="Purge existing pool entries first", help_text="Deletes generated pool entries for the selected providers/countries only; reservations and logs remain.")
+
+    def clean_country_codes(self):
+        values = []
+        for token in re.split(r"[,;\s]+", self.cleaned_data["country_codes"].upper()):
+            token = {"UK": "GB"}.get(token.strip(), token.strip())
+            if not token:
+                continue
+            if not re.fullmatch(r"[A-Z]{2}", token):
+                raise forms.ValidationError(f"Invalid country code: {token}")
+            if token not in values:
+                values.append(token)
+        if not values:
+            raise forms.ValidationError("Enter at least one country code.")
+        return values
 class ConfigBundleForm(forms.ModelForm):
     payload_json = forms.CharField(
         label="Encrypted configuration JSON",
@@ -618,16 +642,51 @@ class ProfileDomainActivityAdmin(admin.ModelAdmin):
 
 @admin.register(ProxyPoolTarget)
 class ProxyPoolTargetAdmin(admin.ModelAdmin):
-    list_display = ("provider_code", "country_code", "region", "city", "config_bundle", "target_count", "replenish_below", "active", "available_entries")
+    change_list_template = "admin/control/proxypooltarget/change_list.html"
+    list_display = ("provider_code", "country_code", "region", "city", "config_bundle", "target_count", "replenish_below", "active", "available_entries", "generate_link")
     list_filter = ("provider_code", "country_code", "active")
     search_fields = ("provider_code", "country_code", "region", "city", "config_bundle__name")
     list_select_related = ("config_bundle",)
+
+    def get_urls(self):
+        custom = [path("generate/", self.admin_site.admin_view(self.generate_view), name="control_proxypooltarget_generate")]
+        return custom + super().get_urls()
 
     @admin.display(description="Available")
     def available_entries(self, obj):
         return obj.entries.filter(state="available").count()
 
+    @admin.display(description="Generate")
+    def generate_link(self, obj):
+        return format_html('<a class="button" href="{}">Generate countries</a>', reverse("admin:control_proxypooltarget_generate"))
 
+    def generate_view(self, request: HttpRequest) -> HttpResponse:
+        form = ProxyPoolGenerateForm(request.POST or None)
+        if request.method == "POST" and form.is_valid():
+            providers = list(form.cleaned_data["provider_codes"])
+            countries = form.cleaned_data["country_codes"]
+            bundle = form.cleaned_data["config_bundle"]
+            target_count = form.cleaned_data["target_count"]
+            replenish_below = form.cleaned_data["replenish_below"]
+            targets = []
+            with transaction.atomic():
+                if form.cleaned_data["purge_existing"]:
+                    ProxyPoolEntry.objects.filter(target__config_bundle=bundle, target__provider_code__in=providers, target__country_code__in=countries).delete()
+                for provider_code in providers:
+                    for country_code in countries:
+                        target, _ = ProxyPoolTarget.objects.get_or_create(
+                            config_bundle=bundle, provider_code=provider_code, country_code=country_code, region="", city="",
+                            defaults={"target_count": target_count, "replenish_below": replenish_below, "active": True},
+                        )
+                        target.target_count = target_count
+                        target.replenish_below = replenish_below
+                        target.active = True
+                        target.save(update_fields=("target_count", "replenish_below", "active"))
+                        targets.append(target)
+            queued = sum(1 for target in targets if queue_refill_proxy_pool(target.pk))
+            messages.success(request, f"Prepared {len(targets)} pool target(s); queued {queued} refill job(s). The Celery worker will generate them asynchronously.")
+            return redirect("admin:control_proxypooltarget_changelist")
+        return TemplateResponse(request, "admin/control/proxypooltarget/generate.html", {**self.admin_site.each_context(request), "title": "Generate proxy pools by country", "form": form})
 @admin.register(ProxyPoolEntry)
 class ProxyPoolEntryAdmin(admin.ModelAdmin):
     list_display = ("target", "state", "exit_ip", "fraud_score", "reserved_client", "created_at", "reserved_at")
