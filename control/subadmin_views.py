@@ -20,6 +20,7 @@ from .models import (
     ProfileDomainActivity,
     SubAdminAccount,
     SubAdminDomainExclusion,
+    SubAdminScopeExclusion,
 )
 
 
@@ -89,13 +90,39 @@ def _excluded_domains(account: SubAdminAccount) -> list[str]:
     )
 
 
+def _excluded_scopes(account: SubAdminAccount) -> dict[str, list[str]]:
+    rows = SubAdminScopeExclusion.objects.filter(account=account, active=True)
+    values = {"office": [], "group": []}
+    for row in rows:
+        values.setdefault(row.scope_type, []).append(row.value)
+    return values
+
+
 def _visible_domain_queryset(account: SubAdminAccount):
     queryset = ProfileDomainActivity.objects.select_related("client")
-    excluded = _excluded_domains(account)
-    if excluded:
-        queryset = queryset.exclude(domain__in=excluded)
+    excluded_domains = _excluded_domains(account)
+    excluded_scopes = _excluded_scopes(account)
+    if excluded_domains:
+        queryset = queryset.exclude(domain__in=excluded_domains)
+    if excluded_scopes["office"]:
+        for value in excluded_scopes["office"]:
+            queryset = queryset.exclude(client__office_name__iexact=value)
+    if excluded_scopes["group"]:
+        for value in excluded_scopes["group"]:
+            queryset = queryset.exclude(group_id__iexact=value)
     return queryset
 
+
+def _visible_profile_queryset(account: SubAdminAccount):
+    queryset = ProfileActivity.objects.all()
+    excluded_scopes = _excluded_scopes(account)
+    if excluded_scopes["office"]:
+        for value in excluded_scopes["office"]:
+            queryset = queryset.exclude(client__office_name__iexact=value)
+    if excluded_scopes["group"]:
+        for value in excluded_scopes["group"]:
+            queryset = queryset.exclude(group_id__iexact=value)
+    return queryset
 
 def _activity_range(request: HttpRequest):
     now = timezone.now()
@@ -135,7 +162,7 @@ def subadmin_dashboard(request: HttpRequest) -> HttpResponse:
     suspicious = visible_domains.filter(
         domain__in=monitored, last_visited_at__gte=since
     ).count()
-    profiles_opened = ProfileActivity.objects.filter(
+    profiles_opened = _visible_profile_queryset(request.subadmin_account).filter(
         status="profile_opened", created_at__gte=since
     ).count()
     return render(

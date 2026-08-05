@@ -439,3 +439,39 @@ class SubAdminDomainExclusion(models.Model):
 
     def __str__(self) -> str:
         return f"{self.account} / {self.domain}"
+
+class SubAdminScopeExclusion(models.Model):
+    """Office or browser-group scope hidden from one sub-admin account."""
+
+    SCOPE_CHOICES = (
+        ("office", "Office"),
+        ("group", "Browser group"),
+    )
+
+    account = models.ForeignKey(
+        SubAdminAccount,
+        on_delete=models.CASCADE,
+        related_name="scope_exclusions",
+    )
+    scope_type = models.CharField(max_length=16, choices=SCOPE_CHOICES)
+    value = models.CharField(max_length=160)
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("scope_type", "value")
+        verbose_name = "Sub-admin scope exclusion"
+        verbose_name_plural = "Sub-admin scope exclusions"
+        constraints = [
+            models.UniqueConstraint(
+                fields=("account", "scope_type", "value"),
+                name="unique_subadmin_scope_exclusion",
+            )
+        ]
+
+    def save(self, *args, **kwargs):
+        self.value = self.value.strip().casefold()
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f"{self.account} / {self.scope_type}: {self.value}"
