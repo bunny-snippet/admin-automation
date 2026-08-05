@@ -16,6 +16,7 @@
       <a class="{% if active_page == 'overview' %}active{% endif %}" href="{% url 'control:subadmin-dashboard' %}"><span>OV</span>Overview</a>
       <a class="{% if active_page == 'domains' %}active{% endif %}" href="{% url 'control:subadmin-domains' %}"><span>DA</span>Domain activity</a>
       <a class="{% if active_page == 'suspicious' %}active{% endif %}" href="{% url 'control:subadmin-suspicious' %}"><span>SA</span>Suspicious activity</a>
+      <a class="{% if active_page == 'ip-access' %}active{% endif %}" href="{% url 'control:subadmin-ip-access' %}"><span>IP</span>IP access</a>
     </nav>
     <div class="subadmin-user">
       <div class="avatar">{{ account.user.username|slice:':1'|upper }}</div>

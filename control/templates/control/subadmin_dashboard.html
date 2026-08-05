@@ -16,6 +16,7 @@
       <a class="active" href="{% url 'control:subadmin-dashboard' %}"><span>OV</span>Overview</a>
       <a href="{% url 'control:subadmin-domains' %}"><span>DA</span>Domain activity</a>
       <a href="{% url 'control:subadmin-suspicious' %}"><span>SA</span>Suspicious activity</a>
+      <a href="{% url 'control:subadmin-ip-access' %}"><span>IP</span>IP access</a>
     </nav>
     <div class="subadmin-user">
       <div class="avatar">{{ account.user.username|slice:':1'|upper }}</div>

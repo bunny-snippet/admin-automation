@@ -5,6 +5,7 @@ import hashlib
 from typing import Any
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.core.validators import RegexValidator
 from django.db import models
 
@@ -90,6 +91,36 @@ class ClientAccess(models.Model):
     def __str__(self) -> str:
         return f"{self.office_name} / sys_{self.system_number} / {self.ipv4}"
 
+
+class ClientAccessIP(models.Model):
+    """Additional public IPv4 allowed for an existing client/device."""
+
+    client = models.ForeignKey(
+        ClientAccess,
+        on_delete=models.CASCADE,
+        related_name="allowed_ips",
+    )
+    ipv4 = models.GenericIPAddressField(protocol="IPv4")
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("ipv4",)
+        verbose_name = "Additional client IPv4"
+        verbose_name_plural = "Additional client IPv4s"
+        constraints = [
+            models.UniqueConstraint(
+                fields=("client", "ipv4"),
+                name="unique_client_allowed_ipv4",
+            )
+        ]
+
+    def clean(self):
+        if self.client_id and self.client and str(self.ipv4) == str(self.client.ipv4):
+            raise ValidationError({"ipv4": "This is already the client's primary IPv4."})
+
+    def __str__(self) -> str:
+        return f"{self.client} / {self.ipv4}"
 
 class Provider(models.Model):
     code = models.CharField(max_length=32, unique=True, validators=[catalog_id_validator])

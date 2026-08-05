@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import ipaddress
 from datetime import timedelta
 from functools import wraps
 
 from django.contrib.auth import authenticate, login, logout
+from django.contrib import messages
 from django.contrib.auth.views import redirect_to_login
 from django.core.paginator import Paginator
+from django.db.models import Prefetch
 from django.db.models import Count, Sum
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
@@ -15,6 +18,8 @@ from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from .models import (
+    ClientAccess,
+    ClientAccessIP,
     MonitoredDomain,
     ProfileActivity,
     ProfileDomainActivity,
@@ -122,6 +127,17 @@ def _visible_profile_queryset(account: SubAdminAccount):
     if excluded_scopes["group"]:
         for value in excluded_scopes["group"]:
             queryset = queryset.exclude(group_id__iexact=value)
+    return queryset
+
+def _visible_client_queryset(account: SubAdminAccount):
+    scopes = _excluded_scopes(account)
+    queryset = ClientAccess.objects.select_related("config_bundle").prefetch_related(
+        Prefetch("allowed_ips", to_attr="visible_allowed_ips")
+    )
+    for value in scopes["office"]:
+        queryset = queryset.exclude(office_name__iexact=value)
+    for value in scopes["group"]:
+        queryset = queryset.exclude(config_bundle__browser_group_id__iexact=value)
     return queryset
 
 def _activity_range(request: HttpRequest):
@@ -277,6 +293,55 @@ def subadmin_suspicious_activity(request: HttpRequest) -> HttpResponse:
         },
     )
 
+
+@subadmin_required
+@require_http_methods(["GET", "POST"])
+def subadmin_ip_access(request: HttpRequest) -> HttpResponse:
+    account = request.subadmin_account
+    clients = _visible_client_queryset(account).order_by(
+        "office_name", "system_number", "name"
+    )
+    if request.method == "POST":
+        client_id = str(request.POST.get("client_id") or "").strip()
+        action = str(request.POST.get("action") or "add").strip().lower()
+        raw_ip = str(request.POST.get("ipv4") or "").strip()
+        client = clients.filter(pk=client_id).first()
+        try:
+            parsed = ipaddress.ip_address(raw_ip)
+            if not isinstance(parsed, ipaddress.IPv4Address):
+                raise ValueError
+            ip_value = str(parsed)
+        except ValueError:
+            messages.error(request, "Enter a valid IPv4 address.")
+        else:
+            if client is None:
+                messages.error(request, "That client is not available in your assigned offices/groups.")
+            elif action == "remove":
+                deleted, _ = ClientAccessIP.objects.filter(
+                    client=client, ipv4=ip_value
+                ).delete()
+                if deleted:
+                    messages.success(request, f"Removed {ip_value} from {client.name}.")
+                else:
+                    messages.error(request, "Only additional IP entries can be removed; primary IP was not changed.")
+            elif ip_value == str(client.ipv4):
+                messages.error(request, "That is already the client's primary IPv4.")
+            else:
+                entry, _created = ClientAccessIP.objects.get_or_create(
+                    client=client, ipv4=ip_value,
+                    defaults={"active": True},
+                )
+                entry.active = True
+                entry.full_clean()
+                entry.save(update_fields=("active",))
+                messages.success(request, f"{ip_value} is now allowed for {client.name}.")
+        return redirect("control:subadmin-ip-access")
+
+    return render(
+        request,
+        "control/subadmin_ip_access.html",
+        {"account": account, "clients": clients, "active_page": "ip-access"},
+    )
 
 @require_POST
 def subadmin_logout(request: HttpRequest) -> HttpResponse:

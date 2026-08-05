@@ -12,7 +12,7 @@ from datetime import timezone as datetime_timezone
 from django.conf import settings
 from django.core import signing
 from django.core.cache import cache
-from django.db.models import Prefetch
+from django.db.models import Prefetch, Q
 from django.db import transaction
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
@@ -280,7 +280,9 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
 
     client = (
         ClientAccess.objects.select_related("config_bundle")
-        .filter(ipv4=access_ip, device_id=device_id)
+        .filter(device_id=device_id)
+        .filter(Q(ipv4=access_ip) | Q(allowed_ips__ipv4=access_ip, allowed_ips__active=True))
+        .distinct()
         .first()
     )
     if client is None:
@@ -399,13 +401,14 @@ def proxy_file(request: HttpRequest, provider_code: str, country_code: str) -> J
             raise signing.BadSignature("IP changed")
         if token_payload.get("device_id", "") != device_id:
             raise signing.BadSignature("Device changed")
-        client = ClientAccess.objects.select_related("config_bundle").get(
+        client = ClientAccess.objects.select_related("config_bundle").filter(
             pk=token_payload.get("client_id"),
-            ipv4=access_ip,
             device_id=device_id,
             active=True,
             config_bundle__active=True,
-        )
+        ).filter(
+            Q(ipv4=access_ip) | Q(allowed_ips__ipv4=access_ip, allowed_ips__active=True)
+        ).distinct().get()
         if token_payload.get("config_version") != client.config_bundle.version:
             raise signing.BadSignature("Configuration changed")
         row = ProxyCountryFile.objects.select_related("provider").get(
@@ -451,10 +454,12 @@ def _authenticated_client(request: HttpRequest) -> ClientAccess:
                                   max_age=settings.BOOTSTRAP_TOKEN_MAX_AGE)
     if token_payload.get("ip") != access_ip or token_payload.get("device_id", "") != device_id:
         raise signing.BadSignature("Client identity changed")
-    client = ClientAccess.objects.select_related("config_bundle").get(
-        pk=token_payload.get("client_id"), ipv4=access_ip, device_id=device_id,
+    client = ClientAccess.objects.select_related("config_bundle").filter(
+        pk=token_payload.get("client_id"), device_id=device_id,
         active=True, config_bundle__active=True,
-    )
+    ).filter(
+        Q(ipv4=access_ip) | Q(allowed_ips__ipv4=access_ip, allowed_ips__active=True)
+    ).distinct().get()
     if token_payload.get("config_version") != client.config_bundle.version:
         raise signing.BadSignature("Configuration changed")
     return client

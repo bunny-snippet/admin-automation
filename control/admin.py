@@ -12,6 +12,7 @@ from django.conf import settings
 from django.contrib import admin, messages
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
+from django.db.models import Q
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.template.response import TemplateResponse
@@ -19,7 +20,7 @@ from django.urls import path, reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
-from .models import (BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyReservation, ProfileActivity, ProfileDomainActivity, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry, ProxyRegionCatalog, SubAdminAccount, SubAdminDomainExclusion, SubAdminScopeExclusion)
+from .models import (BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyReservation, ProfileActivity, ProfileDomainActivity, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry, ProxyRegionCatalog, SubAdminAccount, SubAdminDomainExclusion, SubAdminScopeExclusion, ClientAccessIP)
 from .tasks import queue_refill_proxy_pool
 
 
@@ -422,6 +423,19 @@ class ConfigBundleAdmin(admin.ModelAdmin):
     search_fields = ("name", "browser_group_name", "browser_group_id")
 
 
+class ClientAccessIPInline(admin.TabularInline):
+    model = ClientAccessIP
+    extra = 1
+    fields = ("ipv4", "active", "created_at")
+    readonly_fields = ("created_at",)
+
+
+@admin.register(ClientAccessIP)
+class ClientAccessIPAdmin(admin.ModelAdmin):
+    list_display = ("client", "ipv4", "active", "created_at")
+    list_filter = ("active", "client__office_name")
+    search_fields = ("ipv4", "client__name", "client__device_id", "client__office_name")
+
 @admin.register(ClientAccess)
 class ClientAccessAdmin(admin.ModelAdmin):
     list_display = (
@@ -444,6 +458,7 @@ class ClientAccessAdmin(admin.ModelAdmin):
         "system_number",
         "profile_name",
     )
+    inlines = (ClientAccessIPInline,)
 
 
 @admin.register(Provider)
@@ -610,9 +625,10 @@ class BootstrapAuditAdmin(admin.ModelAdmin):
             return redirect("admin:control_bootstrapaudit_changelist")
 
         existing = ClientAccess.objects.filter(
-            ipv4=access_ip,
             device_id=audit.device_id,
-        ).first()
+        ).filter(
+            Q(ipv4=access_ip) | Q(allowed_ips__ipv4=access_ip, allowed_ips__active=True)
+        ).distinct().first()
         if existing:
             if not request.user.has_perm("control.change_clientaccess"):
                 raise PermissionDenied
