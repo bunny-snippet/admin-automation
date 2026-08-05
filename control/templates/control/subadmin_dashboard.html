@@ -14,8 +14,8 @@
     <div class="workspace-state"><span class="pulse-dot"></span> Live workspace</div>
     <nav class="subadmin-nav" aria-label="Sub-admin navigation">
       <a class="active" href="{% url 'control:subadmin-dashboard' %}"><span>OV</span>Overview</a>
-      <a class="disabled" href="#"><span>DA</span>Domain activity<em>Soon</em></a>
-      <a class="disabled" href="#"><span>SA</span>Suspicious activity<em>Soon</em></a>
+      <a href="{% url 'control:subadmin-domains' %}"><span>DA</span>Domain activity</a>
+      <a href="{% url 'control:subadmin-suspicious' %}"><span>SA</span>Suspicious activity</a>
     </nav>
     <div class="subadmin-user">
       <div class="avatar">{{ account.user.username|slice:':1'|upper }}</div>

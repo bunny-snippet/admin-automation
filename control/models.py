@@ -409,3 +409,33 @@ class SubAdminAccount(models.Model):
 
     def __str__(self) -> str:
         return self.display_name.strip() or self.user.get_username()
+
+class SubAdminDomainExclusion(models.Model):
+    """Exact domain hidden from one sub-admin account."""
+
+    account = models.ForeignKey(
+        SubAdminAccount,
+        on_delete=models.CASCADE,
+        related_name="domain_exclusions",
+    )
+    domain = models.CharField(max_length=253)
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("domain",)
+        verbose_name = "Sub-admin domain exclusion"
+        verbose_name_plural = "Sub-admin domain exclusions"
+        constraints = [
+            models.UniqueConstraint(
+                fields=("account", "domain"),
+                name="unique_subadmin_domain_exclusion",
+            )
+        ]
+
+    def save(self, *args, **kwargs):
+        self.domain = self.domain.strip().casefold().rstrip(".")
+        super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f"{self.account} / {self.domain}"

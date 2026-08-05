@@ -9,6 +9,8 @@ urlpatterns = [
     path("panel/", panel_views.panel, name="panel"),
     path("subadmin/login/", subadmin_views.subadmin_login, name="subadmin-login"),
     path("subadmin/", subadmin_views.subadmin_dashboard, name="subadmin-dashboard"),
+    path("subadmin/domains/", subadmin_views.subadmin_domain_activity, name="subadmin-domains"),
+    path("subadmin/suspicious/", subadmin_views.subadmin_suspicious_activity, name="subadmin-suspicious"),
     path("subadmin/logout/", subadmin_views.subadmin_logout, name="subadmin-logout"),
     path(
         "panel/api/overview/",

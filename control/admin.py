@@ -19,7 +19,7 @@ from django.urls import path, reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
-from .models import (BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyReservation, ProfileActivity, ProfileDomainActivity, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry, ProxyRegionCatalog, SubAdminAccount)
+from .models import (BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyReservation, ProfileActivity, ProfileDomainActivity, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry, ProxyRegionCatalog, SubAdminAccount, SubAdminDomainExclusion)
 from .tasks import queue_refill_proxy_pool
 
 
@@ -280,6 +280,12 @@ def import_catalog_zip(upload, only_provider: str | None = None) -> tuple[int, i
     return len(records), replaced
 
 
+class SubAdminDomainExclusionInline(admin.TabularInline):
+    model = SubAdminDomainExclusion
+    extra = 1
+    fields = ("domain", "active")
+
+
 @admin.register(SubAdminAccount)
 class SubAdminAccountAdmin(admin.ModelAdmin):
     list_display = ("user", "display_name", "active", "last_login_at", "created_at")
@@ -287,6 +293,14 @@ class SubAdminAccountAdmin(admin.ModelAdmin):
     search_fields = ("user__username", "user__email", "display_name")
     autocomplete_fields = ("user",)
     readonly_fields = ("created_at", "last_login_at")
+    inlines = (SubAdminDomainExclusionInline,)
+
+
+@admin.register(SubAdminDomainExclusion)
+class SubAdminDomainExclusionAdmin(admin.ModelAdmin):
+    list_display = ("account", "domain", "active", "created_at")
+    list_filter = ("active", "account")
+    search_fields = ("domain", "account__user__username", "account__display_name")
 
 @admin.register(ConfigBundle)
 class ConfigBundleAdmin(admin.ModelAdmin):
