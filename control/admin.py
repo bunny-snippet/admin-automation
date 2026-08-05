@@ -300,6 +300,10 @@ class SubAdminScopeExclusionForm(forms.ModelForm):
             BrowserGroupMapping.objects.exclude(browser_group_id="")
             .values_list("browser_group_id", flat=True).distinct()
         )
+        self._scope_values = {
+            "office": {str(value).casefold(): str(value) for value in offices},
+            "group": {str(value).casefold(): str(value) for value in group_values},
+        }
         choices = [("", "Select an existing office or browser group")]
         choices.append(("Offices", [(f"office::{value}", value) for value in offices]))
         choices.append(("Browser groups", [(f"group::{value}", value) for value in sorted(group_values)]))
@@ -315,10 +319,23 @@ class SubAdminScopeExclusionForm(forms.ModelForm):
 
     def clean(self):
         cleaned = super().clean()
-        selected = str(cleaned.get("value") or "")
+        selected = str(cleaned.get("value") or "").strip()
         scope_type, separator, value = selected.partition("::")
-        if not separator or scope_type not in {"office", "group"} or not value:
-            raise forms.ValidationError("Choose an existing office or browser group.")
+        if not separator:
+            raw = selected.casefold()
+            matches = [
+                (kind, values[raw])
+                for kind, values in self._scope_values.items()
+                if raw in values
+            ]
+            if len(matches) == 1:
+                scope_type, value = matches[0]
+        if scope_type not in {"office", "group"} or not value:
+            self.add_error(
+                "value",
+                "Select one of the existing Office or Browser group options.",
+            )
+            raise forms.ValidationError("The selected Office/Group could not be identified.")
         cleaned["scope_type"] = scope_type
         cleaned["value"] = value
         return cleaned
