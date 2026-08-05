@@ -253,7 +253,9 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
     access_ip = (
         reported_ip if settings.TRUST_APP_REPORTED_IPV4 else observed_ip
     )
-    rate_key = f"{observed_ip}:{access_ip}"
+    # Rate-limit each authorized device independently. Multiple office PCs
+    # commonly share the same public/NAT IP and must not consume one quota.
+    rate_key = f"{observed_ip}:{access_ip}:{device_id or '<no-device-id>'}"
     if _rate_limited(rate_key):
         return _denied(
             "rate-limited",
