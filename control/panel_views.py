@@ -332,6 +332,20 @@ def panel_domain_activity_api(request: HttpRequest) -> JsonResponse:
         profiles=Count("profile_id", distinct=True),
         sessions=Count("session_id", distinct=True),
     )
+    opened_today_qs = ProfileActivity.objects.filter(
+        status__in=("profile_opened", "opened"),
+        created_at__date=timezone.localdate(),
+    )
+    office = str(request.GET.get("office") or "").strip()
+    client_id = str(request.GET.get("client") or "").strip()
+    group = str(request.GET.get("group") or "").strip()
+    if office:
+        opened_today_qs = opened_today_qs.filter(client__office_name=office)
+    if client_id:
+        opened_today_qs = opened_today_qs.filter(client_id=client_id)
+    if group:
+        opened_today_qs = opened_today_qs.filter(group_id=group)
+    opened_today = opened_today_qs.values("profile_id").distinct().count()
     top_domains = queryset.values("domain").annotate(
         visits=Sum("visit_count"),
         sessions=Count("session_id", distinct=True),
@@ -353,15 +367,16 @@ def panel_domain_activity_api(request: HttpRequest) -> JsonResponse:
     page_size = bounded_int(request.GET.get("page_size"), 25, 10, 100)
     paginator = Paginator(queryset, page_size)
     page = paginator.get_page(bounded_int(request.GET.get("page"), 1, 1, 1000000))
-    filter_source = ProfileDomainActivity.objects.select_related("client")
+    office_source = ClientAccess.objects.all()
+    group_source = ProfileDomainActivity.objects.all()
     options = {
         "offices": list(
-            filter_source.exclude(client__office_name="")
-            .values_list("client__office_name", flat=True)
-            .distinct().order_by("client__office_name")[:200]
+            office_source.exclude(office_name="")
+            .values_list("office_name", flat=True)
+            .distinct().order_by("office_name")[:200]
         ),
         "groups": list(
-            filter_source.exclude(group_id="")
+            group_source.exclude(group_id="")
             .values_list("group_id", flat=True)
             .distinct().order_by("group_id")[:200]
         ),
@@ -388,6 +403,7 @@ def panel_domain_activity_api(request: HttpRequest) -> JsonResponse:
                 "unique_domains": aggregate["domains"] or 0,
                 "devices": aggregate["clients"] or 0,
                 "profiles": aggregate["profiles"] or 0,
+                "profiles_opened_today": opened_today,
                 "sessions": aggregate["sessions"] or 0,
             },
             "top_domains": top_domain_rows,

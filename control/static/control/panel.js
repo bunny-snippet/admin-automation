@@ -296,6 +296,7 @@
         ${metricCard("Total visits", data.metrics.visits, `${number(data.metrics.records)} stored records`)}
         ${metricCard("Unique domains", data.metrics.unique_domains, "Across the filtered period")}
         ${metricCard("Devices", data.metrics.devices, `${number(data.metrics.profiles)} profiles`)}
+        ${metricCard("Profiles opened today", data.metrics.profiles_opened_today, "Successful profile-open events")}
         ${metricCard("Sessions", data.metrics.sessions, "Distinct browsing sessions")}
       </div>
       <div class="domain-layout">
@@ -336,6 +337,9 @@
       });
       state.domainPage = 1;
       loadCurrent();
+    });
+    document.querySelectorAll("#domain-filters select, #domain-filters input[name=\"domain\"], #domain-filters input[name=\"from\"], #domain-filters input[name=\"to\"]").forEach((field) => {
+      field.addEventListener("change", () => document.getElementById("domain-filters").requestSubmit());
     });
     content.querySelector("[data-clear-filters]").addEventListener("click", () => {
       state.domainFilters = { range: "7d", sort: "last_seen", page_size: "25" };
@@ -507,6 +511,9 @@
       state.domainFilters.range = "custom";
       state.domainPage = 1;
       loadCurrent();
+    });
+    document.querySelectorAll("#suspicious-filters input[name=\"from\"], #suspicious-filters input[name=\"to\"]").forEach((field) => {
+      field.addEventListener("change", () => document.getElementById("suspicious-filters").requestSubmit());
     });
     content.querySelector("[data-clear-suspicious-filters]").addEventListener("click", () => {
       state.domainFilters = { range: "7d", sort: "last_seen", page_size: "25" };
