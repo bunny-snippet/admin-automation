@@ -283,7 +283,7 @@ def import_catalog_zip(upload, only_provider: str | None = None) -> tuple[int, i
 class SubAdminScopeExclusionForm(forms.ModelForm):
     class Meta:
         model = SubAdminScopeExclusion
-        fields = ("scope_type", "value", "active")
+        fields = ("account", "scope_type", "value", "active")
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -356,7 +356,8 @@ class SubAdminDomainExclusionAdmin(admin.ModelAdmin):
 @admin.register(SubAdminScopeExclusion)
 class SubAdminScopeExclusionAdmin(admin.ModelAdmin):
     form = SubAdminScopeExclusionForm
-    fields = ("scope_type", "value", "active")
+    fields = ("account", "scope_type", "value", "active")
+    autocomplete_fields = ("account",)
     list_display = ("account", "scope_type", "value", "active", "created_at")
     list_filter = ("scope_type", "active", "account")
     search_fields = ("value", "account__user__username", "account__display_name")
