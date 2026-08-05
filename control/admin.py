@@ -280,6 +280,48 @@ def import_catalog_zip(upload, only_provider: str | None = None) -> tuple[int, i
     return len(records), replaced
 
 
+class SubAdminScopeExclusionForm(forms.ModelForm):
+    class Meta:
+        model = SubAdminScopeExclusion
+        fields = ("scope_type", "value", "active")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        offices = list(
+            ClientAccess.objects.exclude(office_name="")
+            .values_list("office_name", flat=True)
+            .distinct().order_by("office_name")
+        )
+        group_values = set(
+            ProfileDomainActivity.objects.exclude(group_id="")
+            .values_list("group_id", flat=True).distinct()
+        )
+        group_values.update(
+            BrowserGroupMapping.objects.exclude(browser_group_id="")
+            .values_list("browser_group_id", flat=True).distinct()
+        )
+        choices = [("", "Select an existing office or browser group")]
+        choices.append(("Offices", [(f"office::{value}", value) for value in offices]))
+        choices.append(("Browser groups", [(f"group::{value}", value) for value in sorted(group_values)]))
+        self.fields["scope_type"].widget = forms.HiddenInput()
+        self.fields["value"] = forms.ChoiceField(
+            label="Office / browser group",
+            choices=choices,
+            help_text="Choose an existing value; its type is assigned automatically.",
+        )
+        if self.instance.pk:
+            self.initial["value"] = f"{self.instance.scope_type}::{self.instance.value}"
+
+    def clean(self):
+        cleaned = super().clean()
+        selected = str(cleaned.get("value") or "")
+        scope_type, separator, value = selected.partition("::")
+        if not separator or scope_type not in {"office", "group"} or not value:
+            raise forms.ValidationError("Choose an existing office or browser group.")
+        cleaned["scope_type"] = scope_type
+        cleaned["value"] = value
+        return cleaned
+
 class SubAdminDomainExclusionInline(admin.TabularInline):
     model = SubAdminDomainExclusion
     extra = 1
@@ -288,8 +330,9 @@ class SubAdminDomainExclusionInline(admin.TabularInline):
 
 class SubAdminScopeExclusionInline(admin.TabularInline):
     model = SubAdminScopeExclusion
+    form = SubAdminScopeExclusionForm
     extra = 1
-    fields = ("scope_type", "value", "active")
+    fields = ("value", "active")
 
 
 @admin.register(SubAdminAccount)
@@ -311,6 +354,8 @@ class SubAdminDomainExclusionAdmin(admin.ModelAdmin):
 
 @admin.register(SubAdminScopeExclusion)
 class SubAdminScopeExclusionAdmin(admin.ModelAdmin):
+    form = SubAdminScopeExclusionForm
+    fields = ("value", "active")
     list_display = ("account", "scope_type", "value", "active", "created_at")
     list_filter = ("scope_type", "active", "account")
     search_fields = ("value", "account__user__username", "account__display_name")
