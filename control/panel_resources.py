@@ -23,7 +23,7 @@ from .models import (
     ProxyPoolTarget,
     ProxyReservation,
 )
-from .panel_views import admin_change, bounded_int, iso, panel_json
+from .panel_views import admin_change, bounded_int, iso, panel_json, profile_display_name
 
 
 def _column(key: str, label: str, kind: str = "text") -> dict[str, str]:
@@ -89,7 +89,7 @@ def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
                 "system": row.system_number,
                 "ipv4": str(row.ipv4),
                 "device_id": row.device_id,
-                "profile_name": row.profile_name or row.name,
+                "profile_name": profile_display_name(row),
                 "config": row.config_bundle.name,
                 "active": row.active,
                 "last_seen": iso(row.last_seen_at),
@@ -398,7 +398,7 @@ def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
                 "job": row.job_id or "",
                 "provider": row.provider_code,
                 "country": row.country_code,
-                "profile_name": row.profile_name,
+                "profile_name": profile_display_name(row),
                 "profile_id": row.profile_id,
                 "reserved_at": iso(row.reserved_at),
                 "admin_url": admin_change("proxyreservation", row.pk),
@@ -435,7 +435,7 @@ def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
                 "device": row.client.name,
                 "office": row.client.office_name,
                 "group_id": row.group_id,
-                "profile_name": row.profile_name,
+                "profile_name": profile_display_name(row),
                 "profile_id": row.profile_id,
                 "status": row.status,
                 "job": row.job_id or "",

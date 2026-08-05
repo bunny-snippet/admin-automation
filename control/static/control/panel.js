@@ -249,6 +249,10 @@
     return params;
   }
 
+  function dateFilterOptions(filters) {
+    return '<div class="field"><label>From date & time</label><input type="datetime-local" name="from" value="' + e(filters.from || "") + '"></div><div class="field"><label>To date & time</label><input type="datetime-local" name="to" value="' + e(filters.to || "") + '"></div>';
+  }
+
   function filterOptions(data) {
     const filters = state.domainFilters;
     return `
@@ -263,6 +267,7 @@
         ${data.options.groups.map((value) => `<option value="${e(value)}" ${filters.group === value ? "selected" : ""}>${e(value)}</option>`).join("")}
       </select></div>
       <div class="field"><label>Domain contains</label><input name="domain" value="${e(filters.domain || "")}" placeholder="example.com"></div>
+      ${dateFilterOptions(filters)}
       <div class="field"><label>Sort by</label><select name="sort">
         ${[["last_seen","Latest visit"],["visits","Most visits"],["domain","Domain A?Z"],["device","Device"],["first_seen","First visit"]].map(([value,label]) => `<option value="${value}" ${filters.sort === value ? "selected" : ""}>${label}</option>`).join("")}
       </select></div>
@@ -324,7 +329,7 @@
     document.getElementById("domain-filters").addEventListener("submit", (event) => {
       event.preventDefault();
       const values = new FormData(event.currentTarget);
-      ["q", "office", "client", "group", "domain", "sort"].forEach((key) => {
+      ["q", "office", "client", "group", "domain", "from", "to", "sort"].forEach((key) => {
         const value = String(values.get(key) || "").trim();
         if (value) state.domainFilters[key] = value;
         else delete state.domainFilters[key];
@@ -355,7 +360,7 @@
     content.querySelectorAll(`[data-page-type="${type}"]`).forEach((button) => {
       button.addEventListener("click", () => {
         const value = Number(button.dataset.page);
-        if (type === "domains") state.domainPage = value;
+        if (type === "domains" || type === "suspicious") state.domainPage = value;
         else state.resourcePage = value;
         loadCurrent();
         window.scrollTo({ top: 0, behavior: "smooth" });
@@ -453,7 +458,7 @@
   }
 
   async function loadSuspicious() {
-    const params = new URLSearchParams({ range: "7d", page: "1", page_size: "25" });
+    const params = domainParams();
     const data = await api(`${endpoints.suspicious}?${params}`);
     content.innerHTML = `
       <div class="page-intro">
@@ -464,6 +469,13 @@
         </div>
         <a class="button button-secondary" href="${e(data.monitor_admin_url)}">Manage monitored domains</a>
       </div>
+      <div class="subnav" role="group" aria-label="Date range">
+        ${[["24h","24 hours"],["7d","7 days"],["30d","30 days"],["90d","90 days"]].map(([value,label]) => `<button data-range="${value}" class="${state.domainFilters.range === value ? "is-active" : ""}">${label}</button>`).join("")}
+      </div>
+      <form class="toolbar" id="suspicious-filters">${dateFilterOptions(state.domainFilters)}
+        <button class="button button-primary" type="submit">Apply filters</button>
+        <button class="button button-secondary" type="button" data-clear-suspicious-filters>Clear</button>
+      </form>
       <div class="metric-grid">
         ${metricCard("Alerts", data.metrics.records, `${number(data.metrics.domains)} monitored domains`)}
         ${metricCard("Visits", data.metrics.visits, `${number(data.metrics.clients)} devices`)}
@@ -475,6 +487,32 @@
         ${pagination(data.pagination, "suspicious")}
       </article>`;
     bindDomainDetails();
+    document.querySelectorAll("[data-range]").forEach((button) => {
+      button.addEventListener("click", () => {
+        state.domainFilters.range = button.dataset.range;
+        delete state.domainFilters.from;
+        delete state.domainFilters.to;
+        state.domainPage = 1;
+        loadCurrent();
+      });
+    });
+    document.getElementById("suspicious-filters").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const values = new FormData(event.currentTarget);
+      ["from", "to"].forEach((key) => {
+        const value = String(values.get(key) || "").trim();
+        if (value) state.domainFilters[key] = value;
+        else delete state.domainFilters[key];
+      });
+      state.domainFilters.range = "custom";
+      state.domainPage = 1;
+      loadCurrent();
+    });
+    content.querySelector("[data-clear-suspicious-filters]").addEventListener("click", () => {
+      state.domainFilters = { range: "7d", sort: "last_seen", page_size: "25" };
+      state.domainPage = 1;
+      loadCurrent();
+    });
     bindPagination("suspicious");
   }
 

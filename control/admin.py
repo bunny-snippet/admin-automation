@@ -24,6 +24,24 @@ from .tasks import queue_refill_proxy_pool
 
 
 
+def _profile_label(obj):
+    """Show the readable profile name, with safe fallbacks for older rows."""
+    candidates = (
+        getattr(obj, "profile_name", ""),
+        getattr(getattr(obj, "reservation", None), "profile_name", ""),
+        getattr(getattr(obj, "client", None), "profile_name", ""),
+        getattr(getattr(obj, "client", None), "name", ""),
+        getattr(obj, "profile_id", ""),
+    )
+    for value in candidates:
+        value = str(value or "").strip()
+        if value:
+            return value
+    return "Unnamed"
+
+_profile_label.short_description = "Profile"
+_profile_label.admin_order_field = "profile_name"
+
 class ProxyPoolGenerateForm(forms.Form):
     PROVIDER_CHOICES = (("P1", "P1"), ("P2", "P2"), ("P3", "P3"), ("P4", "P4"))
     provider_codes = forms.MultipleChoiceField(label="Providers", choices=PROVIDER_CHOICES, initial=("P1", "P2", "P3"), widget=forms.CheckboxSelectMultiple)
@@ -535,7 +553,7 @@ class ProxyGenerationJobAdmin(admin.ModelAdmin):
 
 @admin.register(ProxyReservation)
 class ProxyReservationAdmin(admin.ModelAdmin):
-    list_display = ("id", "client", "job", "provider_code", "country_code", "region", "city", "profile_name", "profile_id", "reserved_at")
+    list_display = ("id", "client", "job", "provider_code", "country_code", "region", "city", _profile_label, "profile_id", "reserved_at")
     list_filter = ("provider_code", "country_code")
     search_fields = ("client__name", "client__office_name", "profile_name", "profile_id", "proxy_fingerprint")
     readonly_fields = ("client", "job", "provider_code", "country_code", "region", "city", "proxy_fingerprint", "proxy_ciphertext", "profile_name", "profile_id", "reserved_at")
@@ -549,7 +567,7 @@ class ProxyReservationAdmin(admin.ModelAdmin):
 
 @admin.register(ProfileActivity)
 class ProfileActivityAdmin(admin.ModelAdmin):
-    list_display = ("created_at", "client", "job", "reservation", "group_id", "profile_name", "profile_id", "status")
+    list_display = ("created_at", "client", "job", "reservation", "group_id", _profile_label, "profile_id", "status")
     list_filter = ("status", "group_id")
     search_fields = ("client__name", "client__office_name", "profile_name", "profile_id", "detail")
     readonly_fields = ("created_at", "client", "job", "reservation", "group_id", "profile_name", "profile_id", "status", "start_urls_json", "detail")
@@ -579,7 +597,7 @@ def _device_id(obj):
 _device_id.short_description = "Device ID"
 
 
-ProfileActivityAdmin.list_display = ("created_at", _client_ip, _device_id, "client", "group_id", "profile_name", "profile_id", "status")
+ProfileActivityAdmin.list_display = ("created_at", _client_ip, _device_id, "client", "group_id", _profile_label, "profile_id", "status")
 ProfileActivityAdmin.list_filter = ("status", "group_id", "client__office_name", "client__ipv4")
 ProfileActivityAdmin.search_fields = ("client__ipv4", "client__device_id", "client__office_name", "profile_name", "profile_id", "start_urls_json", "detail")
 
@@ -593,7 +611,7 @@ class ProfileDomainActivityAdmin(admin.ModelAdmin):
         _device_id,
         "client",
         "group_id",
-        "profile_name",
+        _profile_label,
         "profile_id",
         "visit_count",
     )

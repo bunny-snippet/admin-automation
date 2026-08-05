@@ -28,6 +28,21 @@ from .models import (
 )
 
 
+def profile_display_name(row: Any) -> str:
+    """Return the readable profile label used throughout the control panel."""
+    candidates = (
+        getattr(row, "profile_name", ""),
+        getattr(getattr(row, "reservation", None), "profile_name", ""),
+        getattr(getattr(row, "client", None), "profile_name", ""),
+        getattr(getattr(row, "client", None), "name", ""),
+        getattr(row, "profile_id", ""),
+    )
+    for value in candidates:
+        value = str(value or "").strip()
+        if value:
+            return value
+    return "Unnamed"
+
 def panel_json(payload: dict[str, Any], status: int = 200) -> JsonResponse:
     response = JsonResponse(payload, status=status)
     response["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
@@ -142,7 +157,7 @@ def domain_row(row: ProfileDomainActivity) -> dict[str, Any]:
         "session_duration_seconds": duration,
         "session_id": row.session_id,
         "group_id": row.group_id,
-        "profile_name": row.profile_name,
+        "profile_name": profile_display_name(row),
         "profile_id": row.profile_id,
         "browser_id": row.browser_id,
         "client_id": row.client_id,
@@ -443,7 +458,7 @@ def panel_domain_activity_export(request: HttpRequest) -> HttpResponse:
             iso(row.last_visited_at), iso(row.session_started_at),
             iso(row.session_ended_at), row.client.office_name,
             row.client.system_number, row.client.name, row.client.ipv4,
-            row.client.device_id, row.group_id, row.profile_name, row.profile_id,
+            row.client.device_id, row.group_id, profile_display_name(row), row.profile_id,
             row.browser_id, row.session_id, row.job_id or "",
             row.reservation_id or "", iso(start), iso(end),
         ])
