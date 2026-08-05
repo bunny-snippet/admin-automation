@@ -1,12 +1,15 @@
 from django.urls import path
 
-from . import panel_resources, panel_views, views
+from . import panel_resources, panel_views, subadmin_views, views
 
 
 app_name = "control"
 urlpatterns = [
     path("", views.home, name="home"),
     path("panel/", panel_views.panel, name="panel"),
+    path("subadmin/login/", subadmin_views.subadmin_login, name="subadmin-login"),
+    path("subadmin/", subadmin_views.subadmin_dashboard, name="subadmin-dashboard"),
+    path("subadmin/logout/", subadmin_views.subadmin_logout, name="subadmin-logout"),
     path(
         "panel/api/overview/",
         panel_views.panel_overview_api,

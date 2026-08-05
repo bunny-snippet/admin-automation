@@ -4,6 +4,7 @@ import base64
 import hashlib
 from typing import Any
 
+from django.conf import settings
 from django.core.validators import RegexValidator
 from django.db import models
 
@@ -365,7 +366,6 @@ class BootstrapAudit(models.Model):
 
     def __str__(self) -> str:
         return f"{self.created_at:%Y-%m-%d %H:%M} / {self.observed_ip} / {self.reason}"
-from django.conf import settings
 class MonitoredDomain(models.Model):
     domain = models.CharField(max_length=253, unique=True)
     label = models.CharField(max_length=120, blank=True, default="")
@@ -387,3 +387,25 @@ class MonitoredDomain(models.Model):
 
     def __str__(self) -> str:
         return self.domain
+
+
+class SubAdminAccount(models.Model):
+    """A non-staff account for the separate sub-admin dashboard."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="subadmin_account",
+    )
+    display_name = models.CharField(max_length=120, blank=True, default="")
+    active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_login_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        verbose_name = "Sub-admin account"
+        verbose_name_plural = "Sub-admin accounts"
+        ordering = ("user__username",)
+
+    def __str__(self) -> str:
+        return self.display_name.strip() or self.user.get_username()

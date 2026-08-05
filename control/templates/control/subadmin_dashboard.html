@@ -1,0 +1,41 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>Sub-admin dashboard</title>
+  <link rel="stylesheet" href="{% static 'control/subadmin.css' %}">
+</head>
+<body class="subadmin-app">
+  <aside class="subadmin-sidebar">
+    <div class="subadmin-brand"><span class="brand-mark">AC</span><div><strong>Automation</strong><small>Sub-admin workspace</small></div></div>
+    <div class="workspace-state"><span class="pulse-dot"></span> Live workspace</div>
+    <nav class="subadmin-nav" aria-label="Sub-admin navigation">
+      <a class="active" href="{% url 'control:subadmin-dashboard' %}"><span>OV</span>Overview</a>
+      <a class="disabled" href="#"><span>DA</span>Domain activity<em>Soon</em></a>
+      <a class="disabled" href="#"><span>SA</span>Suspicious activity<em>Soon</em></a>
+    </nav>
+    <div class="subadmin-user">
+      <div class="avatar">{{ account.user.username|slice:':1'|upper }}</div>
+      <div><strong>{{ account.display_name|default:account.user.username }}</strong><small>{{ account.user.username }}</small></div>
+      <form method="post" action="{% url 'control:subadmin-logout' %}">{% csrf_token %}<button type="submit">Sign out</button></form>
+    </div>
+  </aside>
+  <main class="subadmin-main">
+    <header class="subadmin-topbar">
+      <div><span class="auth-eyebrow">Sub-admin workspace</span><h1>Overview</h1><p>Operational activity from the last 24 hours.</p></div>
+      <span class="updated">Updated {{ generated_at|date:'d M Y, H:i' }}</span>
+    </header>
+    <section class="subadmin-content">
+      <div class="metric-grid">
+        <article class="metric"><span>Profiles opened</span><strong>{{ metrics.profiles_opened }}</strong><small>Successful opens</small></article>
+        <article class="metric"><span>Domain visits</span><strong>{{ metrics.domain_visits }}</strong><small>{{ metrics.unique_domains }} unique domains</small></article>
+        <article class="metric"><span>Suspicious activity</span><strong>{{ metrics.suspicious }}</strong><small>Monitored-domain matches</small></article>
+      </div>
+      <article class="welcome-card"><span class="auth-eyebrow">Ready to configure</span><h2>Your sub-admin dashboard is active.</h2><p>This workspace is intentionally separate from Super Admin. Module visibility and office-level permissions will be added here next.</p></article>
+    </section>
+  </main>
+</body>
+</html>
