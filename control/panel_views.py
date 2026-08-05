@@ -51,6 +51,30 @@ def panel_json(payload: dict[str, Any], status: int = 200) -> JsonResponse:
     return response
 
 
+def profiles_opened_last_24h(request: HttpRequest | None = None) -> int:
+    """Return the canonical profile-open count used by every panel view.
+
+    Overview treats a successful ``profile_opened`` audit as the source of
+    truth. Keeping Domain Activity on this same query prevents drift caused by
+    local-midnight boundaries or deletion events.
+    """
+    since = timezone.now() - timedelta(hours=24)
+    queryset = ProfileActivity.objects.filter(
+        status="profile_opened", created_at__gte=since
+    )
+    if request is not None:
+        office = str(request.GET.get("office") or "").strip()
+        client_id = str(request.GET.get("client") or "").strip()
+        group = str(request.GET.get("group") or "").strip()
+        if office:
+            queryset = queryset.filter(client__office_name=office)
+        if client_id:
+            queryset = queryset.filter(client_id=client_id)
+        if group:
+            queryset = queryset.filter(group_id=group)
+    return queryset.count()
+
+
 def iso(value: datetime | None) -> str:
     if value is None:
         return ""
@@ -255,9 +279,7 @@ def panel_overview_api(request: HttpRequest) -> JsonResponse:
                 "online_24h": ClientAccess.objects.filter(
                     active=True, last_seen_at__gte=since
                 ).count(),
-                "profiles_opened_24h": ProfileActivity.objects.filter(
-                    status="profile_opened", created_at__gte=since
-                ).count(),
+                "profiles_opened_24h": profiles_opened_last_24h(),
                 "domain_visits_24h": domain_totals["visits"] or 0,
                 "unique_domains_24h": domain_totals["domains"] or 0,
                 "sessions_24h": domain_totals["sessions"] or 0,
@@ -332,24 +354,10 @@ def panel_domain_activity_api(request: HttpRequest) -> JsonResponse:
         profiles=Count("profile_id", distinct=True),
         sessions=Count("session_id", distinct=True),
     )
-    local_now = timezone.localtime(timezone.now())
-    day_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
-    day_end = day_start + timedelta(days=1)
-    opened_today_qs = ProfileActivity.objects.filter(
-        status__in=("profile_opened", "opened", "profile_deleted"),
-        created_at__gte=day_start,
-        created_at__lt=day_end,
-    )
-    office = str(request.GET.get("office") or "").strip()
-    client_id = str(request.GET.get("client") or "").strip()
-    group = str(request.GET.get("group") or "").strip()
-    if office:
-        opened_today_qs = opened_today_qs.filter(client__office_name=office)
-    if client_id:
-        opened_today_qs = opened_today_qs.filter(client_id=client_id)
-    if group:
-        opened_today_qs = opened_today_qs.filter(group_id=group)
-    opened_today = opened_today_qs.values("client_id", "profile_id").distinct().count()
+    # Keep this card on the exact same canonical query as Overview. The former
+    # local-midnight/deletion-event query could disagree with the known-good
+    # Overview total.
+    opened_today = profiles_opened_last_24h(request)
     top_domains = queryset.values("domain").annotate(
         visits=Sum("visit_count"),
         sessions=Count("session_id", distinct=True),

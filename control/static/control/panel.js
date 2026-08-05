@@ -296,7 +296,7 @@
         ${metricCard("Total visits", data.metrics.visits, `${number(data.metrics.records)} stored records`)}
         ${metricCard("Unique domains", data.metrics.unique_domains, "Across the filtered period")}
         ${metricCard("Devices", data.metrics.devices, `${number(data.metrics.profiles)} profiles`)}
-        ${metricCard("Profiles opened today", data.metrics.profiles_opened_today, "Successful profile-open events")}
+        ${metricCard("Profiles opened", data.metrics.profiles_opened_today, "Same last-24-hour count as Overview")}
         ${metricCard("Sessions", data.metrics.sessions, "Distinct browsing sessions")}
       </div>
       <div class="domain-layout">
