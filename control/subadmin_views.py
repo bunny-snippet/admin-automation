@@ -8,6 +8,7 @@ from django.contrib.auth import authenticate, login, logout
 from django.contrib import messages
 from django.contrib.auth.views import redirect_to_login
 from django.core.paginator import Paginator
+from django.db import transaction
 from django.db.models import Prefetch
 from django.db.models import Count, Sum
 from django.http import HttpRequest, HttpResponse
@@ -181,6 +182,24 @@ def subadmin_dashboard(request: HttpRequest) -> HttpResponse:
     profiles_opened = _visible_profile_queryset(request.subadmin_account).filter(
         status="profile_opened", created_at__gte=since
     ).count()
+    ip_clients = _visible_client_queryset(request.subadmin_account).order_by(
+        "office_name", "system_number", "name"
+    )
+    ip_client_options = [
+        {
+            "id": client.pk,
+            "office": client.office_name,
+            "system": client.system_number,
+            "name": client.name,
+            "primary": str(client.ipv4),
+            "additional": [
+                str(item.ipv4)
+                for item in client.visible_allowed_ips
+                if item.active
+            ],
+        }
+        for client in ip_clients
+    ]
     return render(
         request,
         "control/subadmin_dashboard.html",
@@ -193,6 +212,7 @@ def subadmin_dashboard(request: HttpRequest) -> HttpResponse:
                 "unique_domains": domain_activity["domains"] or 0,
                 "suspicious": suspicious,
             },
+            "ip_client_options": ip_client_options,
             "active_page": "overview",
         },
     )
@@ -303,46 +323,66 @@ def subadmin_ip_access(request: HttpRequest) -> HttpResponse:
     )
     if request.method == "POST":
         client_id = str(request.POST.get("client_id") or "").strip()
-        action = str(request.POST.get("action") or "add").strip().lower()
-        raw_ip = str(request.POST.get("ipv4") or "").strip()
+        raw_ips = [str(value).strip() for value in request.POST.getlist("ipv4")]
+        raw_ips = [value for value in raw_ips if value]
         client = clients.filter(pk=client_id).first()
-        try:
-            parsed = ipaddress.ip_address(raw_ip)
-            if not isinstance(parsed, ipaddress.IPv4Address):
-                raise ValueError
-            ip_value = str(parsed)
-        except ValueError:
-            messages.error(request, "Enter a valid IPv4 address.")
+        if client is None:
+            messages.error(request, "That device is not available in your assigned offices/groups.")
+        elif not raw_ips:
+            messages.error(request, "Enter at least one IPv4 address.")
         else:
-            if client is None:
-                messages.error(request, "That client is not available in your assigned offices/groups.")
-            elif action == "remove":
-                deleted, _ = ClientAccessIP.objects.filter(
-                    client=client, ipv4=ip_value
-                ).delete()
-                if deleted:
-                    messages.success(request, f"Removed {ip_value} from {client.name}.")
-                else:
-                    messages.error(request, "Only additional IP entries can be removed; primary IP was not changed.")
-            elif ip_value == str(client.ipv4):
-                messages.error(request, "That is already the client's primary IPv4.")
+            parsed_ips = []
+            invalid = None
+            for raw_ip in raw_ips:
+                try:
+                    parsed = ipaddress.ip_address(raw_ip)
+                    if not isinstance(parsed, ipaddress.IPv4Address):
+                        raise ValueError
+                    normalized = str(parsed)
+                except ValueError:
+                    invalid = raw_ip
+                    break
+                if normalized not in parsed_ips:
+                    parsed_ips.append(normalized)
+            if invalid:
+                messages.error(request, f"{invalid} is not a valid IPv4 address.")
+            elif len(parsed_ips) > 8:
+                messages.error(request, "A device can have up to eight allowed IPv4 addresses.")
             else:
-                entry, _created = ClientAccessIP.objects.get_or_create(
-                    client=client, ipv4=ip_value,
-                    defaults={"active": True},
-                )
-                entry.active = True
-                entry.full_clean()
-                entry.save(update_fields=("active",))
-                messages.success(request, f"{ip_value} is now allowed for {client.name}.")
-        return redirect("control:subadmin-ip-access")
+                try:
+                    with transaction.atomic():
+                        primary_ip = parsed_ips[0]
+                        if primary_ip != str(client.ipv4):
+                            if ClientAccess.objects.filter(
+                                ipv4=primary_ip, device_id=client.device_id
+                            ).exclude(pk=client.pk).exists():
+                                raise ValueError("That IPv4 is already assigned to another device.")
+                            client.ipv4 = primary_ip
+                            client.save(update_fields=("ipv4", "updated_at"))
 
-    return render(
-        request,
-        "control/subadmin_ip_access.html",
-        {"account": account, "clients": clients, "active_page": "ip-access"},
-    )
+                        additional_ips = set(parsed_ips[1:])
+                        ClientAccessIP.objects.filter(client=client).exclude(
+                            ipv4__in=additional_ips
+                        ).update(active=False)
+                        for ip_value in additional_ips:
+                            entry, _created = ClientAccessIP.objects.get_or_create(
+                                client=client,
+                                ipv4=ip_value,
+                                defaults={"active": True},
+                            )
+                            entry.active = True
+                            entry.full_clean()
+                            entry.save(update_fields=("active",))
+                except ValueError as exc:
+                    messages.error(request, str(exc))
+                else:
+                    messages.success(
+                        request,
+                        f"Saved {len(parsed_ips)} allowed IP{'s' if len(parsed_ips) != 1 else ''} for {client.name}.",
+                    )
+        return redirect("control:subadmin-dashboard")
 
+    return redirect("control:subadmin-dashboard")
 @require_POST
 def subadmin_logout(request: HttpRequest) -> HttpResponse:
     logout(request)
