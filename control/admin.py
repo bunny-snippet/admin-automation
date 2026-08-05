@@ -10,7 +10,7 @@ from urllib.parse import urlencode
 from django import forms
 from django.conf import settings
 from django.contrib import admin, messages
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import get_object_or_404, redirect
@@ -322,6 +322,34 @@ class SubAdminScopeExclusionForm(forms.ModelForm):
         cleaned["scope_type"] = scope_type
         cleaned["value"] = value
         return cleaned
+
+    def validate_unique(self):
+        """Treat submitting an existing exclusion as an idempotent update."""
+        try:
+            super().validate_unique()
+        except ValidationError:
+            account = self.cleaned_data.get("account")
+            scope_type = self.cleaned_data.get("scope_type")
+            value = self.cleaned_data.get("value")
+            if not account or not scope_type or not value:
+                raise
+            duplicate = SubAdminScopeExclusion.objects.filter(
+                account=account, scope_type=scope_type, value=value
+            ).exclude(pk=self.instance.pk).exists()
+            if not duplicate:
+                raise
+
+    def save(self, commit=True):
+        account = self.cleaned_data.get("account")
+        scope_type = self.cleaned_data.get("scope_type")
+        value = self.cleaned_data.get("value")
+        if account and scope_type and value and not self.instance.pk:
+            existing = SubAdminScopeExclusion.objects.filter(
+                account=account, scope_type=scope_type, value=value
+            ).first()
+            if existing:
+                self.instance = existing
+        return super().save(commit=commit)
 
 class SubAdminDomainExclusionInline(admin.TabularInline):
     model = SubAdminDomainExclusion
