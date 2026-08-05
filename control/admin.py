@@ -303,7 +303,8 @@ class SubAdminScopeExclusionForm(forms.ModelForm):
         choices = [("", "Select an existing office or browser group")]
         choices.append(("Offices", [(f"office::{value}", value) for value in offices]))
         choices.append(("Browser groups", [(f"group::{value}", value) for value in sorted(group_values)]))
-        self.fields["scope_type"].widget = forms.HiddenInput()
+        if "scope_type" in self.fields:
+            self.fields["scope_type"].widget = forms.HiddenInput()
         self.fields["value"] = forms.ChoiceField(
             label="Office / browser group",
             choices=choices,
@@ -332,7 +333,7 @@ class SubAdminScopeExclusionInline(admin.TabularInline):
     model = SubAdminScopeExclusion
     form = SubAdminScopeExclusionForm
     extra = 1
-    fields = ("value", "active")
+    fields = ("scope_type", "value", "active")
 
 
 @admin.register(SubAdminAccount)
@@ -355,7 +356,7 @@ class SubAdminDomainExclusionAdmin(admin.ModelAdmin):
 @admin.register(SubAdminScopeExclusion)
 class SubAdminScopeExclusionAdmin(admin.ModelAdmin):
     form = SubAdminScopeExclusionForm
-    fields = ("value", "active")
+    fields = ("scope_type", "value", "active")
     list_display = ("account", "scope_type", "value", "active", "created_at")
     list_filter = ("scope_type", "active", "account")
     search_fields = ("value", "account__user__username", "account__display_name")
