@@ -7,6 +7,7 @@ from functools import wraps
 from django.contrib.auth import authenticate, login, logout
 from django.contrib import messages
 from django.contrib.auth.views import redirect_to_login
+from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Prefetch
@@ -15,6 +16,7 @@ from django.http import HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
@@ -141,11 +143,73 @@ def _visible_client_queryset(account: SubAdminAccount):
         queryset = queryset.exclude(config_bundle__browser_group_id__iexact=value)
     return queryset
 
+def _parse_ipv4_values(raw_values):
+    parsed_ips = []
+    for raw_value in raw_values:
+        raw_ip = str(raw_value or "").strip()
+        if not raw_ip:
+            continue
+        try:
+            parsed = ipaddress.ip_address(raw_ip)
+            if not isinstance(parsed, ipaddress.IPv4Address):
+                raise ValueError
+        except ValueError as exc:
+            raise ValueError(f"{raw_ip} is not a valid IPv4 address.") from exc
+        normalized = str(parsed)
+        if normalized not in parsed_ips:
+            parsed_ips.append(normalized)
+    if not parsed_ips:
+        raise ValueError("Enter at least one IPv4 address.")
+    if len(parsed_ips) > 8:
+        raise ValueError("A device can have up to eight allowed IPv4 addresses.")
+    return parsed_ips
+
+
+def _save_client_ip_values(client: ClientAccess, parsed_ips: list[str]) -> None:
+    with transaction.atomic():
+        primary_ip = parsed_ips[0]
+        if primary_ip != str(client.ipv4):
+            if ClientAccess.objects.filter(
+                ipv4=primary_ip, device_id=client.device_id
+            ).exclude(pk=client.pk).exists():
+                raise ValueError("That IPv4 is already assigned to another device.")
+            client.ipv4 = primary_ip
+            client.save(update_fields=("ipv4", "updated_at"))
+        additional_ips = set(parsed_ips[1:])
+        ClientAccessIP.objects.filter(client=client).exclude(
+            ipv4__in=additional_ips
+        ).update(active=False)
+        for ip_value in additional_ips:
+            entry, _created = ClientAccessIP.objects.get_or_create(
+                client=client,
+                ipv4=ip_value,
+                defaults={"active": True},
+            )
+            entry.active = True
+            entry.full_clean()
+            entry.save(update_fields=("active",))
+
 def _activity_range(request: HttpRequest):
     now = timezone.now()
     selected = str(request.GET.get("range") or "7d").strip().lower()
     days = {"24h": 1, "7d": 7, "30d": 30}.get(selected, 7)
-    return selected if selected in {"24h", "7d", "30d"} else "7d", now - timedelta(days=days), now
+    start = now - timedelta(days=days)
+    end = now
+    from_value = str(request.GET.get("from") or "").strip()
+    to_value = str(request.GET.get("to") or "").strip()
+    if from_value:
+        parsed = parse_datetime(from_value)
+        if parsed:
+            start = timezone.make_aware(parsed) if timezone.is_naive(parsed) else parsed
+            selected = "custom"
+    if to_value:
+        parsed = parse_datetime(to_value)
+        if parsed:
+            end = timezone.make_aware(parsed) if timezone.is_naive(parsed) else parsed
+            selected = "custom"
+    if start >= end:
+        start = end - timedelta(days=7)
+    return selected if selected in {"24h", "7d", "30d", "custom"} else "7d", start, end
 
 
 def _activity_rows(page):
@@ -255,6 +319,8 @@ def subadmin_domain_activity(request: HttpRequest) -> HttpResponse:
             "title": "Domain activity",
             "description": "Visible profile browsing activity for your assigned workspace.",
             "selected_range": selected,
+            "from_value": str(request.GET.get("from") or ""),
+            "to_value": str(request.GET.get("to") or ""),
             "query": query,
             "office": office,
             "offices": offices,
@@ -300,6 +366,8 @@ def subadmin_suspicious_activity(request: HttpRequest) -> HttpResponse:
             "title": "Suspicious activity",
             "description": "Monitored domains accessed by visible profiles.",
             "selected_range": selected,
+            "from_value": str(request.GET.get("from") or ""),
+            "to_value": str(request.GET.get("to") or ""),
             "query": query,
             "office": "",
             "offices": [],
@@ -323,66 +391,113 @@ def subadmin_ip_access(request: HttpRequest) -> HttpResponse:
     )
     if request.method == "POST":
         client_id = str(request.POST.get("client_id") or "").strip()
-        raw_ips = [str(value).strip() for value in request.POST.getlist("ipv4")]
-        raw_ips = [value for value in raw_ips if value]
         client = clients.filter(pk=client_id).first()
         if client is None:
             messages.error(request, "That device is not available in your assigned offices/groups.")
-        elif not raw_ips:
-            messages.error(request, "Enter at least one IPv4 address.")
         else:
-            parsed_ips = []
-            invalid = None
-            for raw_ip in raw_ips:
-                try:
-                    parsed = ipaddress.ip_address(raw_ip)
-                    if not isinstance(parsed, ipaddress.IPv4Address):
-                        raise ValueError
-                    normalized = str(parsed)
-                except ValueError:
-                    invalid = raw_ip
-                    break
-                if normalized not in parsed_ips:
-                    parsed_ips.append(normalized)
-            if invalid:
-                messages.error(request, f"{invalid} is not a valid IPv4 address.")
-            elif len(parsed_ips) > 8:
-                messages.error(request, "A device can have up to eight allowed IPv4 addresses.")
+            try:
+                parsed_ips = _parse_ipv4_values(request.POST.getlist("ipv4"))
+                _save_client_ip_values(client, parsed_ips)
+            except (ValueError, ValidationError) as exc:
+                messages.error(request, str(exc))
+            else:
+                messages.success(
+                    request,
+                    f"Saved {len(parsed_ips)} allowed IP{'s' if len(parsed_ips) != 1 else ''} for {client.name}.",
+                )
+        return redirect("control:subadmin-dashboard")
+    return redirect("control:subadmin-dashboard")
+
+
+@subadmin_required
+@require_http_methods(["GET", "POST"])
+def subadmin_devices(request: HttpRequest) -> HttpResponse:
+    account = request.subadmin_account
+    clients = _visible_client_queryset(account).order_by(
+        "office_name", "system_number", "name"
+    )
+    offices = list(
+        clients.exclude(office_name="").values_list("office_name", flat=True).distinct()
+    )
+    if request.method == "POST":
+        action = str(request.POST.get("action") or "").strip().lower()
+        if action == "toggle":
+            client = clients.filter(pk=request.POST.get("client_id")).first()
+            if client is None:
+                messages.error(request, "That device is not available in your assigned offices/groups.")
+            else:
+                client.active = str(request.POST.get("active") or "0") == "1"
+                client.save(update_fields=("active", "updated_at"))
+                messages.success(request, f"{client.name} access is now {'enabled' if client.active else 'disabled'}.")
+        elif action == "save_ips":
+            client = clients.filter(pk=request.POST.get("client_id")).first()
+            if client is None:
+                messages.error(request, "That device is not available in your assigned offices/groups.")
             else:
                 try:
-                    with transaction.atomic():
-                        primary_ip = parsed_ips[0]
-                        if primary_ip != str(client.ipv4):
-                            if ClientAccess.objects.filter(
-                                ipv4=primary_ip, device_id=client.device_id
-                            ).exclude(pk=client.pk).exists():
-                                raise ValueError("That IPv4 is already assigned to another device.")
-                            client.ipv4 = primary_ip
-                            client.save(update_fields=("ipv4", "updated_at"))
-
-                        additional_ips = set(parsed_ips[1:])
-                        ClientAccessIP.objects.filter(client=client).exclude(
-                            ipv4__in=additional_ips
-                        ).update(active=False)
-                        for ip_value in additional_ips:
-                            entry, _created = ClientAccessIP.objects.get_or_create(
-                                client=client,
-                                ipv4=ip_value,
-                                defaults={"active": True},
-                            )
-                            entry.active = True
-                            entry.full_clean()
-                            entry.save(update_fields=("active",))
-                except ValueError as exc:
+                    parsed_ips = _parse_ipv4_values(request.POST.getlist("ipv4"))
+                    _save_client_ip_values(client, parsed_ips)
+                except (ValueError, ValidationError) as exc:
                     messages.error(request, str(exc))
                 else:
-                    messages.success(
-                        request,
-                        f"Saved {len(parsed_ips)} allowed IP{'s' if len(parsed_ips) != 1 else ''} for {client.name}.",
-                    )
-        return redirect("control:subadmin-dashboard")
+                    messages.success(request, f"Saved IP access for {client.name}.")
+        elif action == "bulk_ips":
+            office = str(request.POST.get("office") or "").strip()
+            targets = clients.filter(office_name__iexact=office) if office else clients.none()
+            if not office or not targets.exists():
+                messages.error(request, "Choose a visible office with at least one device.")
+            else:
+                try:
+                    parsed_ips = _parse_ipv4_values(request.POST.getlist("ipv4"))
+                    with transaction.atomic():
+                        for client in targets:
+                            _save_client_ip_values(client, parsed_ips)
+                except (ValueError, ValidationError) as exc:
+                    messages.error(request, str(exc))
+                else:
+                    messages.success(request, f"Saved IP access for {targets.count()} device(s) in {office}.")
+        else:
+            messages.error(request, "Unknown device action.")
+        return redirect("control:subadmin-devices")
 
-    return redirect("control:subadmin-dashboard")
+    office = str(request.GET.get("office") or "").strip()
+    query = str(request.GET.get("q") or "").strip()
+    active = str(request.GET.get("active") or "").strip().lower()
+    start_value = str(request.GET.get("from") or "").strip()
+    end_value = str(request.GET.get("to") or "").strip()
+    if office:
+        clients = clients.filter(office_name__iexact=office)
+    if query:
+        clients = clients.filter(
+            Q(name__icontains=query) | Q(system_number__icontains=query)
+            | Q(device_id__icontains=query) | Q(ipv4__icontains=query)
+            | Q(profile_name__icontains=query)
+        )
+    if active in {"1", "0"}:
+        clients = clients.filter(active=active == "1")
+    if start_value:
+        parsed = parse_datetime(start_value)
+        if parsed:
+            clients = clients.filter(last_seen_at__gte=timezone.make_aware(parsed) if timezone.is_naive(parsed) else parsed)
+    if end_value:
+        parsed = parse_datetime(end_value)
+        if parsed:
+            clients = clients.filter(last_seen_at__lte=timezone.make_aware(parsed) if timezone.is_naive(parsed) else parsed)
+    return render(
+        request,
+        "control/subadmin_devices.html",
+        {
+            "account": account,
+            "clients": clients,
+            "offices": offices,
+            "selected_office": office,
+            "query": query,
+            "active_filter": active,
+            "from_value": start_value,
+            "to_value": end_value,
+            "active_page": "devices",
+        },
+    )
 @require_POST
 def subadmin_logout(request: HttpRequest) -> HttpResponse:
     logout(request)

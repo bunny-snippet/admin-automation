@@ -11,8 +11,11 @@ urlpatterns = [
     path("subadmin/", subadmin_views.subadmin_dashboard, name="subadmin-dashboard"),
     path("subadmin/domains/", subadmin_views.subadmin_domain_activity, name="subadmin-domains"),
     path("subadmin/suspicious/", subadmin_views.subadmin_suspicious_activity, name="subadmin-suspicious"),
+    path("subadmin/devices/", subadmin_views.subadmin_devices, name="subadmin-devices"),
     path("subadmin/ip-access/", subadmin_views.subadmin_ip_access, name="subadmin-ip-access"),
     path("subadmin/logout/", subadmin_views.subadmin_logout, name="subadmin-logout"),
+    path("panel/api/devices/", panel_views.panel_devices_api, name="panel-devices-api"),
+    path("panel/api/subadmins/", panel_views.panel_subadmins_api, name="panel-subadmins-api"),
     path(
         "panel/api/overview/",
         panel_views.panel_overview_api,

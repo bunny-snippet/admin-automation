@@ -1,22 +1,29 @@
 from __future__ import annotations
 
 import csv
+import ipaddress
+import json
 from datetime import datetime, time, timedelta
 from typing import Any
 
 from django.contrib.admin.views.decorators import staff_member_required
+from django.core.exceptions import ValidationError
 from django.core.paginator import Paginator
-from django.db.models import Count, Max, Q, Sum
+from django.db import transaction
+from django.db.models import Count, Max, Prefetch, Q, Sum
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
-from django.views.decorators.http import require_GET
+from django.views.decorators.http import require_GET, require_http_methods
+
+from .subadmin_views import _parse_ipv4_values, _save_client_ip_values
 
 from .models import (
     BootstrapAudit,
     ClientAccess,
+    ClientAccessIP,
     ConfigBundle,
     ExtensionPackage,
     ProfileActivity,
@@ -25,6 +32,9 @@ from .models import (
     Provider,
     ProxyGenerationJob,
     ProxyPoolEntry,
+    SubAdminAccount,
+    SubAdminDomainExclusion,
+    SubAdminScopeExclusion,
 )
 
 
@@ -215,6 +225,122 @@ def panel(request: HttpRequest) -> HttpResponse:
         },
     )
 
+
+def _panel_datetime_bound(value: Any):
+    parsed = parse_datetime(str(value or "").strip())
+    if parsed is None:
+        return None
+    return timezone.make_aware(parsed) if timezone.is_naive(parsed) else parsed
+
+
+def _panel_device_row(row: ClientAccess) -> dict[str, Any]:
+    additional = [str(item.ipv4) for item in getattr(row, "active_allowed_ips", [])]
+    return {
+        "id": row.pk, "name": row.name, "office": row.office_name,
+        "system": row.system_number, "ipv4": str(row.ipv4),
+        "additional_ips": additional, "device_id": row.device_id,
+        "profile_name": row.profile_name or row.name, "config": row.config_bundle.name,
+        "group_name": row.config_bundle.browser_group_name,
+        "group_id": row.config_bundle.browser_group_id, "active": row.active,
+        "last_seen": iso(row.last_seen_at), "created_at": iso(row.created_at),
+        "admin_url": admin_change("clientaccess", row.pk),
+    }
+
+
+@staff_member_required(login_url="admin:login")
+@require_http_methods(["GET", "POST"])
+def panel_devices_api(request: HttpRequest) -> JsonResponse:
+    if request.method == "POST":
+        try:
+            body = json.loads(request.body.decode("utf-8") or "{}")
+        except (ValueError, UnicodeDecodeError):
+            return panel_json({"ok": False, "message": "Invalid JSON body."}, status=400)
+        if not isinstance(body, dict):
+            return panel_json({"ok": False, "message": "JSON body must be an object."}, status=400)
+        action = str(body.get("action") or "").strip().lower()
+        try:
+            if action == "toggle":
+                client = get_object_or_404(ClientAccess, pk=body.get("client_id"))
+                client.active = bool(body.get("active"))
+                client.save(update_fields=("active", "updated_at"))
+                return panel_json({"ok": True, "message": f"{client.name} access updated."})
+            if action == "update_ips":
+                client = get_object_or_404(ClientAccess, pk=body.get("client_id"))
+                parsed_ips = _parse_ipv4_values(body.get("ipv4") or [])
+                _save_client_ip_values(client, parsed_ips)
+                return panel_json({"ok": True, "message": f"IP access saved for {client.name}."})
+            if action == "bulk_office":
+                office = str(body.get("office") or "").strip()
+                if not office:
+                    raise ValueError("Choose an office.")
+                parsed_ips = _parse_ipv4_values(body.get("ipv4") or [])
+                targets = list(ClientAccess.objects.filter(office_name__iexact=office))
+                if not targets:
+                    raise ValueError("No devices exist in that office.")
+                with transaction.atomic():
+                    for client in targets:
+                        _save_client_ip_values(client, parsed_ips)
+                return panel_json({"ok": True, "message": f"IP access saved for {len(targets)} device(s)."})
+            return panel_json({"ok": False, "message": "Unknown device action."}, status=400)
+        except (ValueError, ValidationError) as exc:
+            return panel_json({"ok": False, "message": str(exc)}, status=400)
+
+    queryset = ClientAccess.objects.select_related("config_bundle").prefetch_related(
+        Prefetch("allowed_ips", queryset=ClientAccessIP.objects.filter(active=True), to_attr="active_allowed_ips")
+    )
+    query = str(request.GET.get("q") or "").strip()
+    office = str(request.GET.get("office") or "").strip()
+    active = str(request.GET.get("active") or "").strip().lower()
+    if query:
+        queryset = queryset.filter(Q(name__icontains=query) | Q(ipv4__icontains=query) | Q(device_id__icontains=query) | Q(office_name__icontains=query) | Q(system_number__icontains=query) | Q(profile_name__icontains=query))
+    if office:
+        queryset = queryset.filter(office_name__iexact=office)
+    if active in {"1", "0"}:
+        queryset = queryset.filter(active=active == "1")
+    start = _panel_datetime_bound(request.GET.get("from"))
+    end = _panel_datetime_bound(request.GET.get("to"))
+    if start:
+        queryset = queryset.filter(last_seen_at__gte=start)
+    if end:
+        queryset = queryset.filter(last_seen_at__lte=end)
+    queryset = queryset.order_by("office_name", "system_number", "name")
+    page_size = bounded_int(request.GET.get("page_size"), 25, 10, 100)
+    paginator = Paginator(queryset, page_size)
+    page = paginator.get_page(bounded_int(request.GET.get("page"), 1, 1, 1000000))
+    offices = list(ClientAccess.objects.exclude(office_name="").values_list("office_name", flat=True).distinct().order_by("office_name"))
+    aggregate = queryset.aggregate(total=Count("id"), active=Count("id", filter=Q(active=True)), seen=Count("id", filter=Q(last_seen_at__isnull=False)))
+    return panel_json({"rows": [_panel_device_row(row) for row in page.object_list], "offices": offices, "filters": {"q": query, "office": office, "active": active, "from": str(request.GET.get("from") or ""), "to": str(request.GET.get("to") or "")}, "metrics": {"total": aggregate["total"] or 0, "active": aggregate["active"] or 0, "seen": aggregate["seen"] or 0}, "pagination": {"page": page.number, "pages": paginator.num_pages, "page_size": page_size, "total": paginator.count, "has_previous": page.has_previous(), "has_next": page.has_next()}})
+
+
+@staff_member_required(login_url="admin:login")
+@require_http_methods(["GET", "POST"])
+def panel_subadmins_api(request: HttpRequest) -> JsonResponse:
+    if request.method == "POST":
+        try:
+            body = json.loads(request.body.decode("utf-8") or "{}")
+        except (ValueError, UnicodeDecodeError):
+            return panel_json({"ok": False, "message": "Invalid JSON body."}, status=400)
+        account = get_object_or_404(SubAdminAccount, pk=body.get("account_id"))
+        offices = [str(value).strip().casefold() for value in (body.get("excluded_offices") or []) if str(value).strip()]
+        groups = [str(value).strip().casefold() for value in (body.get("excluded_groups") or []) if str(value).strip()]
+        domains = [str(value).strip().casefold().rstrip(".") for value in (body.get("excluded_domains") or []) if str(value).strip()]
+        with transaction.atomic():
+            if "active" in body:
+                account.active = bool(body.get("active"))
+                account.save(update_fields=("active",))
+            SubAdminScopeExclusion.objects.filter(account=account).delete()
+            SubAdminScopeExclusion.objects.bulk_create([SubAdminScopeExclusion(account=account, scope_type="office", value=value) for value in offices] + [SubAdminScopeExclusion(account=account, scope_type="group", value=value) for value in groups])
+            SubAdminDomainExclusion.objects.filter(account=account).delete()
+            for domain in domains:
+                SubAdminDomainExclusion.objects.create(account=account, domain=domain)
+        return panel_json({"ok": True, "message": f"Visibility saved for {account}."})
+    accounts = []
+    for account in SubAdminAccount.objects.select_related("user").prefetch_related("scope_exclusions", "domain_exclusions"):
+        scopes = list(account.scope_exclusions.all())
+        accounts.append({"id": account.pk, "username": account.user.username, "display_name": account.display_name or account.user.username, "active": account.active, "excluded_offices": [row.value for row in scopes if row.scope_type == "office"], "excluded_groups": [row.value for row in scopes if row.scope_type == "group"], "excluded_domains": [row.domain for row in account.domain_exclusions.all() if row.active]})
+    office_options = list(ClientAccess.objects.exclude(office_name="").values_list("office_name", flat=True).distinct().order_by("office_name"))
+    group_options = list(ConfigBundle.objects.exclude(browser_group_id="").values("browser_group_id", "browser_group_name").distinct().order_by("browser_group_name"))
+    return panel_json({"accounts": accounts, "office_options": office_options, "group_options": group_options})
 
 @staff_member_required(login_url="admin:login")
 @require_GET

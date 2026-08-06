@@ -13,6 +13,8 @@
 
   const endpoints = {
     overview: app.dataset.overviewUrl,
+    devices: app.dataset.devicesUrl,
+    subadmins: app.dataset.subadminsUrl,
     domains: app.dataset.domainUrl,
     suspicious: app.dataset.suspiciousUrl,
     export: app.dataset.domainExportUrl,
@@ -23,6 +25,7 @@
     domains: ["Domain activity", "Domain activity intelligence"],
     suspicious: ["Suspicious activity", "Monitored-domain alerts"],
     devices: ["Devices", "Devices and access"],
+    subadmins: ["Sub-admin access", "Office, group and domain visibility"],
     configurations: ["Config bundles", "Configuration bundles"],
     groups: ["Browser groups", "Browser group mapping"],
     providers: ["Providers", "Proxy providers"],
@@ -40,6 +43,8 @@
     resourcePage: 1,
     resourceQuery: "",
     domainPage: 1,
+    devicePage: 1,
+    deviceFilters: { page_size: "25" },
     domainFilters: { range: "7d", sort: "last_seen", page_size: "25" },
   };
 
@@ -100,6 +105,20 @@
     return payload;
   }
 
+  async function writeApi(url, payload) {
+    syncLabel.textContent = "Saving";
+    const csrf = document.querySelector("#panel-csrf-token input[name=csrfmiddlewaretoken]")?.value || "";
+    const response = await fetch(url, {
+      method: "POST", credentials: "same-origin",
+      headers: { Accept: "application/json", "Content-Type": "application/json", "X-CSRFToken": csrf },
+      body: JSON.stringify(payload),
+    });
+    if (response.redirected && response.url.includes("login")) { window.location.assign(response.url); throw new Error("Session expired"); }
+    const data = await response.json().catch(() => ({}));
+    syncLabel.textContent = response.ok && data.ok !== false ? "Saved" : "Save failed";
+    if (!response.ok || data.ok === false) throw new Error(data.message || `Request failed with status ${response.status}`);
+    return data;
+  }
   function loading() {
     content.innerHTML = `
       <div class="loading-state">
@@ -365,6 +384,7 @@
       button.addEventListener("click", () => {
         const value = Number(button.dataset.page);
         if (type === "domains" || type === "suspicious") state.domainPage = value;
+        else if (type === "devices") state.devicePage = value;
         else state.resourcePage = value;
         loadCurrent();
         window.scrollTo({ top: 0, behavior: "smooth" });
@@ -381,6 +401,73 @@
     return `<span class="${mono}" title="${e(value)}">${e(value === "" || value == null ? "?" : truncate(value, 55))}</span>`;
   }
 
+  function deviceParams() {
+    const params = new URLSearchParams();
+    Object.entries(state.deviceFilters).forEach(([key, value]) => { if (value) params.set(key, value); });
+    params.set("page", String(state.devicePage));
+    return params;
+  }
+
+  function closeManagementDialog(node) { if (node?.close) node.close(); else node?.removeAttribute("open"); }
+
+  function openDeviceEditor(row) {
+    const node = document.getElementById("device-dialog");
+    const ips = [row.ipv4, ...(row.additional_ips || [])];
+    node.innerHTML = `<div class="dialog-header"><div><span class="eyebrow">Device access</span><h2>Edit ${e(row.name)}</h2><p>${e(row.office)} / sys_${e(row.system)} · ${e(row.device_id || "No device ID")}</p></div><button type="button" class="dialog-close" data-management-close>Close</button></div><form class="management-form" id="device-edit-form"><div class="management-ip-list">${ips.map((ip, index) => `<div class="management-ip-row"><input name="ipv4" value="${e(ip)}" inputmode="numeric" required><span>${index ? "Additional" : "Primary"}</span>${index ? '<button type="button" class="link-button remove-management-ip">Remove</button>' : ""}</div>`).join("")}</div><button type="button" class="button button-secondary" id="add-management-ip">+ Add another IP</button><div class="dialog-actions"><button type="button" class="button button-secondary" data-management-close>Cancel</button><button class="button button-primary" type="submit">Save IP access</button></div></form>`;
+    node.showModal ? node.showModal() : node.setAttribute("open", "");
+    node.querySelectorAll("[data-management-close]").forEach((button) => button.addEventListener("click", () => closeManagementDialog(node)));
+    node.querySelectorAll(".remove-management-ip").forEach((button) => button.addEventListener("click", () => button.closest(".management-ip-row").remove()));
+    node.querySelector("#add-management-ip").addEventListener("click", () => {
+      const rowNode = document.createElement("div"); rowNode.className = "management-ip-row";
+      rowNode.innerHTML = '<input name="ipv4" inputmode="numeric" placeholder="203.0.113.11"><span>Additional</span><button type="button" class="link-button remove-management-ip">Remove</button>';
+      rowNode.querySelector(".remove-management-ip").addEventListener("click", () => rowNode.remove());
+      node.querySelector(".management-ip-list").appendChild(rowNode);
+    });
+    node.querySelector("#device-edit-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      try { await writeApi(endpoints.devices, { action: "update_ips", client_id: row.id, ipv4: [...event.currentTarget.querySelectorAll('input[name="ipv4"]')].map((input) => input.value) }); closeManagementDialog(node); await loadDevices(); }
+      catch (error) { node.querySelector(".management-form").insertAdjacentHTML("afterbegin", `<div class="form-error">${e(error.message)}</div>`); }
+    });
+  }
+
+  function openBulkDeviceEditor(data) {
+    const node = document.getElementById("device-dialog");
+    node.innerHTML = `<div class="dialog-header"><div><span class="eyebrow">Office-wide update</span><h2>Change IP access for an office</h2><p>Every device in the office will receive the same primary and optional additional IPs.</p></div><button type="button" class="dialog-close" data-management-close>Close</button></div><form class="management-form" id="bulk-device-form"><label>Office<select name="office" required><option value="">Choose office</option>${data.offices.map((office) => `<option value="${e(office)}">${e(office)}</option>`).join("")}</select></label><div class="management-ip-list"><div class="management-ip-row"><input name="ipv4" placeholder="203.0.113.10" required><span>Primary</span></div><div class="management-ip-row"><input name="ipv4" placeholder="203.0.113.11"><span>Additional</span></div></div><button type="button" class="button button-secondary" id="add-bulk-ip">+ Add another IP</button><div class="dialog-actions"><button type="button" class="button button-secondary" data-management-close>Cancel</button><button class="button button-primary" type="submit">Save office IPs</button></div></form>`;
+    node.showModal ? node.showModal() : node.setAttribute("open", "");
+    node.querySelectorAll("[data-management-close]").forEach((button) => button.addEventListener("click", () => closeManagementDialog(node)));
+    node.querySelector("#add-bulk-ip").addEventListener("click", () => {
+      const rowNode = document.createElement("div"); rowNode.className = "management-ip-row";
+      rowNode.innerHTML = '<input name="ipv4" inputmode="numeric" placeholder="203.0.113.12"><span>Additional</span><button type="button" class="link-button remove-management-ip">Remove</button>';
+      rowNode.querySelector(".remove-management-ip").addEventListener("click", () => rowNode.remove());
+      node.querySelector(".management-ip-list").appendChild(rowNode);
+    });
+    node.querySelector("#bulk-device-form").addEventListener("submit", async (event) => {
+      event.preventDefault(); const form = event.currentTarget;
+      try { await writeApi(endpoints.devices, { action: "bulk_office", office: form.office.value, ipv4: [...form.querySelectorAll('input[name="ipv4"]')].map((input) => input.value) }); closeManagementDialog(node); await loadDevices(); }
+      catch (error) { form.insertAdjacentHTML("afterbegin", `<div class="form-error">${e(error.message)}</div>`); }
+    });
+  }
+
+  async function loadDevices() {
+    const data = await api(`${endpoints.devices}?${deviceParams()}`);
+    content.innerHTML = `<div class="page-intro"><div><span class="eyebrow">Access management</span><h2>Devices and IP access</h2><p>Manage every authorized device, its office, profile identity, group assignment and allowed public IPs.</p></div><button class="button button-primary" id="bulk-office-button">Bulk office IPs</button></div><form class="toolbar" id="device-filters"><div class="field field-wide"><label>Search</label><input name="q" value="${e(state.deviceFilters.q || "")}" placeholder="Device, system, IP or device ID"></div><div class="field"><label>Office</label><select name="office"><option value="">All offices</option>${data.offices.map((office) => `<option value="${e(office)}" ${state.deviceFilters.office === office ? "selected" : ""}>${e(office)}</option>`).join("")}</select></div><div class="field"><label>Access</label><select name="active"><option value="">All</option><option value="1" ${state.deviceFilters.active === "1" ? "selected" : ""}>Enabled</option><option value="0" ${state.deviceFilters.active === "0" ? "selected" : ""}>Disabled</option></select></div>${dateFilterOptions(state.deviceFilters)}<button class="button button-primary" type="submit">Apply filters</button><button class="button button-secondary" type="button" id="clear-device-filters">Clear</button></form><div class="metric-grid">${metricCard("Matching devices", data.metrics.total, "Current filters")}${metricCard("Enabled", data.metrics.active, "Access allowed")}${metricCard("Seen before", data.metrics.seen, "Have a last-seen timestamp")}</div><article class="panel-card"><div class="panel-header"><div><h3>Device registry</h3><p>${number(data.pagination.total)} matching devices</p></div></div><div class="panel-body-flush"><div class="table-wrap"><table class="data-table management-table"><thead><tr><th>Office / system</th><th>Device</th><th>Profile / group</th><th>Allowed IPs</th><th>Access</th><th>Last seen</th><th></th></tr></thead><tbody>${data.rows.length ? data.rows.map((row) => `<tr><td><span class="cell-primary">${e(row.office)}</span><div class="cell-muted">sys_${e(row.system)}</div></td><td><span class="cell-primary">${e(row.name)}</span><div class="cell-muted mono">${e(row.device_id || "No device ID")}</div></td><td><span class="cell-primary">${e(row.profile_name)}</span><div class="cell-muted">${e(row.group_name)} · ${e(row.group_id || "No group ID")}</div></td><td><span class="mono">${[row.ipv4, ...(row.additional_ips || [])].map(e).join("<br>")}</span></td><td><button class="status-pill ${row.active ? "is-success" : "is-danger"}" data-device-toggle="${row.id}" data-active="${row.active ? "0" : "1"}">${row.active ? "Enabled" : "Disabled"}</button></td><td>${row.last_seen ? formatDate(row.last_seen) : "Never"}</td><td><button class="link-button" data-device-edit="${row.id}">Edit IPs</button></td></tr>`).join("") : '<tr><td colspan="7" class="empty-state">No devices found.</td></tr>'}</tbody></table></div></div>${pagination(data.pagination, "devices")}</article>`;
+    document.getElementById("bulk-office-button").addEventListener("click", () => openBulkDeviceEditor(data));
+    document.querySelectorAll("[data-device-edit]").forEach((button) => button.addEventListener("click", () => openDeviceEditor(data.rows.find((row) => String(row.id) === button.dataset.deviceEdit))));
+    document.querySelectorAll("[data-device-toggle]").forEach((button) => button.addEventListener("click", async () => { try { await writeApi(endpoints.devices, { action: "toggle", client_id: button.dataset.deviceToggle, active: button.dataset.active === "1" }); await loadDevices(); } catch (error) { showError(error); } }));
+    document.getElementById("device-filters").addEventListener("submit", (event) => { event.preventDefault(); const values = new FormData(event.currentTarget); ["q", "office", "active", "from", "to"].forEach((key) => { const value = String(values.get(key) || "").trim(); if (value) state.deviceFilters[key] = value; else delete state.deviceFilters[key]; }); state.devicePage = 1; loadCurrent(); });
+    document.getElementById("clear-device-filters").addEventListener("click", () => { state.deviceFilters = { page_size: "25" }; state.devicePage = 1; loadCurrent(); });
+    bindPagination("devices");
+  }
+
+  async function loadSubadmins() {
+    const data = await api(endpoints.subadmins);
+    content.innerHTML = `<div class="page-intro"><div><span class="eyebrow">Visibility management</span><h2>Sub-admin access</h2><p>Choose exactly which offices, browser groups and monitored domains each sub-admin can see.</p></div></div>${data.accounts.length ? `<div class="subadmin-management-grid"><article class="panel-card"><div class="panel-header"><div><h3>Accounts</h3><p>Select an account to manage</p></div></div><div class="panel-body subadmin-account-list">${data.accounts.map((account, index) => `<button class="subadmin-account ${index === 0 ? "is-active" : ""}" data-subadmin-account="${account.id}"><strong>${e(account.display_name)}</strong><span>${e(account.username)} · ${account.active ? "Active" : "Disabled"}</span></button>`).join("")}</div></article><article class="panel-card"><div class="panel-header"><div><h3 id="subadmin-editor-title">Visibility rules</h3><p>Excluded scopes are hidden from this account.</p></div></div><div class="panel-body" id="subadmin-editor"></div></article></div>` : '<div class="empty-state"><h2>No sub-admin accounts</h2><p>Create a Sub-admin account first.</p></div>'}`;
+    if (!data.accounts.length) return;
+    const editor = document.getElementById("subadmin-editor");
+    const render = (account) => { editor.innerHTML = `<form id="subadmin-form" class="subadmin-visibility-form"><label class="check-line"><input type="checkbox" name="active" ${account.active ? "checked" : ""}> Account active</label><div class="visibility-section"><h4>Exclude offices</h4><div class="check-grid">${data.office_options.map((office) => `<label class="check-line"><input type="checkbox" name="excluded_offices" value="${e(office)}" ${account.excluded_offices.includes(office.toLowerCase()) ? "checked" : ""}> ${e(office)}</label>`).join("")}</div></div><div class="visibility-section"><h4>Exclude browser groups</h4><div class="check-grid">${data.group_options.map((group) => `<label class="check-line"><input type="checkbox" name="excluded_groups" value="${e(group.browser_group_id)}" ${account.excluded_groups.includes(String(group.browser_group_id).toLowerCase()) ? "checked" : ""}> ${e(group.browser_group_name)} · ${e(group.browser_group_id)}</label>`).join("")}</div></div><div class="visibility-section"><h4>Exclude domains</h4><textarea name="excluded_domains" rows="5" placeholder="one-domain.com per line">${e(account.excluded_domains.join("\n"))}</textarea></div><button class="button button-primary" type="submit">Save visibility</button></form>`; editor.querySelector("#subadmin-form").addEventListener("submit", async (event) => { event.preventDefault(); const form = event.currentTarget; try { await writeApi(endpoints.subadmins, { account_id: account.id, active: form.active.checked, excluded_offices: [...form.querySelectorAll('[name="excluded_offices"]:checked')].map((input) => input.value), excluded_groups: [...form.querySelectorAll('[name="excluded_groups"]:checked')].map((input) => input.value), excluded_domains: form.excluded_domains.value.split(/\r?\n/).map((value) => value.trim()).filter(Boolean) }); await loadSubadmins(); } catch (error) { editor.insertAdjacentHTML("afterbegin", `<div class="form-error">${e(error.message)}</div>`); } }); };
+    data.accounts.forEach((account) => document.querySelector(`[data-subadmin-account="${account.id}"]`).addEventListener("click", () => { document.querySelectorAll(".subadmin-account").forEach((item) => item.classList.remove("is-active")); document.querySelector(`[data-subadmin-account="${account.id}"]`).classList.add("is-active"); render(account); }));
+    render(data.accounts[0]);
+  }
   async function loadResource() {
     const url = endpoints.resource.replace("__resource__", encodeURIComponent(state.route));
     const params = new URLSearchParams({
@@ -530,6 +617,8 @@
       if (state.route === "overview") await loadOverview();
       else if (state.route === "domains") await loadDomains();
       else if (state.route === "suspicious") await loadSuspicious();
+      else if (state.route === "devices") await loadDevices();
+      else if (state.route === "subadmins") await loadSubadmins();
       else await loadResource();
     } catch (error) {
       showError(error);

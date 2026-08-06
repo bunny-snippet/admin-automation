@@ -12,6 +12,8 @@
   <div class="mobile-overlay" data-sidebar-close></div>
   <div class="app-shell" id="panel-app"
        data-overview-url="{% url 'control:panel-overview-api' %}"
+       data-devices-url="{% url 'control:panel-devices-api' %}"
+       data-subadmins-url="{% url 'control:panel-subadmins-api' %}"
        data-domain-url="{% url 'control:panel-domain-activity-api' %}"
        data-suspicious-url="{% url 'control:panel-suspicious-activity-api' %}"
        data-domain-export-url="{% url 'control:panel-domain-activity-export' %}"
@@ -51,6 +53,7 @@
           <button class="nav-item" data-route="configurations">
             <span class="nav-icon">CF</span><span>Config bundles</span>
           </button>
+          <button class="nav-item" data-route="subadmins"><span class="nav-icon">SA</span><span>Sub-admin access</span></button>
           <button class="nav-item" data-route="groups">
             <span class="nav-icon">GR</span><span>Browser groups</span>
           </button>
@@ -147,6 +150,9 @@
     <div id="detail-content"></div>
   </dialog>
 
+  <dialog class="detail-dialog management-dialog" id="device-dialog"></dialog>
+  <dialog class="detail-dialog management-dialog" id="subadmin-dialog"></dialog>
+
   <template id="error-template">
     <div class="empty-state">
       <div class="empty-symbol">!</div>
@@ -156,6 +162,7 @@
     </div>
   </template>
 
+  <span id="panel-csrf-token" hidden>{% csrf_token %}</span>
   <script src="{% static 'control/panel.js' %}" defer></script>
 </body>
 </html>
