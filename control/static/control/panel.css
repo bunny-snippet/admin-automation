@@ -125,6 +125,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
   border-radius: 10px;
   cursor: pointer;
   text-align: left;
+  text-decoration: none;
   transition: background .18s ease, color .18s ease, transform .18s ease;
 }
 

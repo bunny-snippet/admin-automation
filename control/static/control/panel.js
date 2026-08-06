@@ -641,7 +641,7 @@
     loadCurrent();
   }
 
-  document.querySelectorAll(".nav-item").forEach((item) => {
+  document.querySelectorAll(".nav-item[data-route]").forEach((item) => {
     item.addEventListener("click", () => navigate(item.dataset.route));
   });
   refreshButton.addEventListener("click", loadCurrent);

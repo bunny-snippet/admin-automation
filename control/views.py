@@ -25,6 +25,9 @@ from .models import (
     BootstrapAudit, ClientAccess, ExtensionPackage, ProfileActivity, ProfileDomainActivity, Provider, ProxyCountryFile,
     ProxyGenerationJob, ProxyReservation, ProxyRegionCatalog,
 )
+
+
+MAX_PROFILES_PER_REQUEST = 3
 from .proxy_jobs import get_or_create_pool_target, reserve_pool_proxies, reserve_static_proxies
 from .tasks import queue_refill_proxy_pool
 from .openapi import OPENAPI_SCHEMA, SWAGGER_HTML
@@ -494,7 +497,10 @@ def _job_payload(job: ProxyGenerationJob) -> dict[str, Any]:
     return {
         "id": job.pk,
         "status": job.status,
+        "submitted_count": job.submitted_count,
         "requested_count": job.requested_count,
+        "max_profiles_per_request": MAX_PROFILES_PER_REQUEST,
+        "was_capped": job.submitted_count > job.requested_count,
         "ready_count": job.ready_count,
         "error": job.error,
         "proxies": proxies,
@@ -529,12 +535,13 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
         country_code = str(body.get("country") or "").strip().upper()
         region = str(body.get("region") or "").strip()[:120]
         city = str(body.get("city") or "").strip()[:120]
-        requested_count = int(body.get("count") or 1)
+        submitted_count = int(body.get("count") or 1)
+        requested_count = min(submitted_count, MAX_PROFILES_PER_REQUEST)
         if region.casefold() in {"any", "all", "random"}:
             region = ""
         if city.casefold() in {"any", "all", "random"}:
             city = ""
-        if not provider_code or not country_code or not 1 <= requested_count <= 50:
+        if not provider_code or not country_code or not 1 <= submitted_count <= 50:
             raise ValueError("Invalid proxy request")
         city = ""
         if provider_code not in {"P1", "P2"}:
@@ -554,7 +561,8 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
     with transaction.atomic():
         job = ProxyGenerationJob.objects.create(
             client=client, provider_code=provider_code, country_code=country_code,
-            region=region, city=city, requested_count=requested_count, status="queued",
+            region=region, city=city, submitted_count=submitted_count,
+            requested_count=requested_count, status="queued",
         )
         reservations = reserve_pool_proxies(
             client=client, job=job, provider_code=provider_code, country_code=country_code, region=region, city=city,

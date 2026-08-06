@@ -38,6 +38,10 @@ from .models import (
 )
 
 
+PROFILE_OPEN_STATUSES = {"profile_opened", "opened"}
+PROFILE_DELETE_STATUSES = {"profile_deleted", "deleted", "profile_delete_completed"}
+
+
 def profile_display_name(row: Any) -> str:
     """Return the readable profile label used throughout the control panel."""
     candidates = (
@@ -61,16 +65,23 @@ def panel_json(payload: dict[str, Any], status: int = 200) -> JsonResponse:
     return response
 
 
-def profiles_opened_last_24h(request: HttpRequest | None = None) -> int:
+def profiles_opened_last_24h(
+    request: HttpRequest | None = None,
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> int:
     """Return the canonical profile-open count used by every panel view.
 
     Overview treats a successful ``profile_opened`` audit as the source of
     truth. Keeping Domain Activity on this same query prevents drift caused by
     local-midnight boundaries or deletion events.
     """
-    since = timezone.now() - timedelta(hours=24)
+    if start is None:
+        start = timezone.now() - timedelta(hours=24)
+    if end is None:
+        end = timezone.now()
     queryset = ProfileActivity.objects.filter(
-        status="profile_opened", created_at__gte=since
+        status__in=PROFILE_OPEN_STATUSES, created_at__gte=start, created_at__lt=end
     )
     if request is not None:
         office = str(request.GET.get("office") or "").strip()
@@ -288,6 +299,8 @@ def panel_devices_api(request: HttpRequest) -> JsonResponse:
     queryset = ClientAccess.objects.select_related("config_bundle").prefetch_related(
         Prefetch("allowed_ips", queryset=ClientAccessIP.objects.filter(active=True), to_attr="active_allowed_ips")
     )
+
+
     query = str(request.GET.get("q") or "").strip()
     office = str(request.GET.get("office") or "").strip()
     active = str(request.GET.get("active") or "").strip().lower()
@@ -342,6 +355,145 @@ def panel_subadmins_api(request: HttpRequest) -> JsonResponse:
     group_options = list(ConfigBundle.objects.exclude(browser_group_id="").values("browser_group_id", "browser_group_name").distinct().order_by("browser_group_name"))
     return panel_json({"accounts": accounts, "office_options": office_options, "group_options": group_options})
 
+@staff_member_required(login_url="admin:login")
+@require_GET
+def panel_office_audit(request: HttpRequest) -> HttpResponse:
+    """Render a source-of-truth, office-scoped profile lifecycle audit."""
+    start, end, preset = domain_range(request)
+    offices = list(
+        ClientAccess.objects.exclude(office_name="")
+        .values_list("office_name", flat=True)
+        .distinct()
+        .order_by("office_name")
+    )
+    office = str(request.GET.get("office") or "").strip()
+    if office not in offices:
+        office = offices[0] if offices else ""
+
+    jobs = ProxyGenerationJob.objects.select_related("client").filter(
+        created_at__gte=start, created_at__lt=end
+    )
+    activities = ProfileActivity.objects.select_related("client", "job", "reservation").filter(
+        created_at__gte=start, created_at__lt=end
+    )
+    domains = ProfileDomainActivity.objects.select_related("client").filter(
+        last_visited_at__gte=start, last_visited_at__lt=end
+    )
+    if office:
+        jobs = jobs.filter(client__office_name=office)
+        activities = activities.filter(client__office_name=office)
+        domains = domains.filter(client__office_name=office)
+
+    all_jobs = list(jobs.order_by("-created_at", "-id"))
+    jobs = all_jobs[:500]
+    activity_rows = list(activities.order_by("-created_at", "-id"))
+    opened_ids = {
+        (row.client_id, row.profile_id)
+        for row in activity_rows
+        if row.status.casefold() in PROFILE_OPEN_STATUSES and row.profile_id
+    }
+    deleted_ids = {
+        (row.client_id, row.profile_id)
+        for row in activity_rows
+        if row.status.casefold() in PROFILE_DELETE_STATUSES and row.profile_id
+    }
+    opened_by_job: dict[int, set[tuple[int, str]]] = {}
+    deleted_by_job: dict[int, set[tuple[int, str]]] = {}
+    for row in activity_rows:
+        key = (row.client_id, row.profile_id)
+        if not row.job_id or not row.profile_id:
+            continue
+        if row.status.casefold() in PROFILE_OPEN_STATUSES:
+            opened_by_job.setdefault(row.job_id, set()).add(key)
+        if row.status.casefold() in PROFILE_DELETE_STATUSES:
+            deleted_by_job.setdefault(row.job_id, set()).add(key)
+
+    submitted_total = sum(getattr(job, "submitted_count", job.requested_count) for job in all_jobs)
+    accepted_total = sum(job.requested_count for job in all_jobs)
+    opened_total = len(opened_ids)
+    deleted_total = len(deleted_ids & opened_ids)
+
+    default_domains = {"ipapi.co", "www.ipapi.co"}
+    profile_domains: dict[tuple[int, str], set[str]] = {}
+    profile_meta: dict[tuple[int, str], ProfileDomainActivity] = {}
+    for row in domains:
+        key = (row.client_id, row.profile_id)
+        profile_domains.setdefault(key, set()).add(row.domain.casefold())
+        current = profile_meta.get(key)
+        if current is None or row.last_visited_at > current.last_visited_at:
+            profile_meta[key] = row
+    default_only = []
+    for key, domain_set in profile_domains.items():
+        if domain_set and domain_set.issubset(default_domains):
+            row = profile_meta[key]
+            default_only.append({
+                "time": row.last_visited_at,
+                "device": row.client.name,
+                "office": row.client.office_name,
+                "system": row.client.system_number,
+                "profile_name": row.profile_name or row.profile_id,
+                "profile_id": row.profile_id,
+                "domains": ", ".join(sorted(domain_set)),
+            })
+    default_only.sort(key=lambda row: row["time"], reverse=True)
+
+    job_rows = []
+    for job in jobs:
+        opened = len(opened_by_job.get(job.id, set()))
+        deleted = len(deleted_by_job.get(job.id, set()) & opened_by_job.get(job.id, set()))
+        job_rows.append({
+            "id": job.id,
+            "time": job.created_at,
+            "device": job.client.name,
+            "system": job.client.system_number,
+            "provider": job.provider_code,
+            "country": job.country_code,
+            "submitted": getattr(job, "submitted_count", job.requested_count),
+            "accepted": job.requested_count,
+            "opened": opened,
+            "deleted": deleted,
+            "pending_delete": max(0, opened - deleted),
+            "status": job.status,
+        })
+    lifecycle_rows = [
+        {
+            "time": row.created_at,
+            "device": row.client.name,
+            "system": row.client.system_number,
+            "status": row.status,
+            "profile_name": row.profile_name or row.profile_id,
+            "profile_id": row.profile_id,
+            "job_id": row.job_id or "",
+            "detail": row.detail,
+        }
+        for row in activity_rows[:1000]
+    ]
+    return render(request, "control/office_audit.html", {
+        "panel_title": "Office profile audit",
+        "admin_url": reverse("admin:index"),
+        "logout_url": reverse("admin:logout"),
+        "office_options": offices,
+        "selected_office": office,
+        "selected_preset": preset,
+        "from_value": request.GET.get("from", ""),
+        "to_value": request.GET.get("to", ""),
+        "range_from": start,
+        "range_to": end,
+        "metrics": {
+            "commands": len(all_jobs),
+            "submitted": submitted_total,
+            "accepted": accepted_total,
+            "opened": opened_total,
+            "deleted": deleted_total,
+            "pending_delete": max(0, opened_total - deleted_total),
+            "open_gap": max(0, accepted_total - opened_total),
+            "default_only": len(default_only),
+        },
+        "job_total": len(all_jobs),
+        "job_rows": job_rows,
+        "lifecycle_rows": lifecycle_rows,
+        "default_only_rows": default_only[:500],
+    })
 @staff_member_required(login_url="admin:login")
 @require_GET
 def panel_overview_api(request: HttpRequest) -> JsonResponse:
@@ -483,7 +635,7 @@ def panel_domain_activity_api(request: HttpRequest) -> JsonResponse:
     # Keep this card on the exact same canonical query as Overview. The former
     # local-midnight/deletion-event query could disagree with the known-good
     # Overview total.
-    opened_today = profiles_opened_last_24h(request)
+    opened_today = profiles_opened_last_24h(request, start, end)
     top_domains = queryset.values("domain").annotate(
         visits=Sum("visit_count"),
         sessions=Count("session_id", distinct=True),

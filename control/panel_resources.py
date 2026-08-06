@@ -361,6 +361,7 @@ def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
                 "location": " / ".join(
                     value for value in (row.region, row.city) if value
                 ) or "Any",
+                "submitted_count": getattr(row, "submitted_count", row.requested_count),
                 "progress": f"{row.ready_count} / {row.requested_count}",
                 "status": row.status,
                 "error": row.error,
@@ -372,6 +373,7 @@ def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
             columns=[
                 t("id", "Job"), t("device", "Device"),
                 t("provider", "Provider"), t("country", "Country"),
+                t("submitted_count", "Submitted"),
                 t("location", "Location"), t("progress", "Ready"),
                 s("status", "Status"), t("error", "Error"),
                 d("created_at", "Created"),

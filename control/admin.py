@@ -682,10 +682,10 @@ class BootstrapAuditAdmin(admin.ModelAdmin):
 
 @admin.register(ProxyGenerationJob)
 class ProxyGenerationJobAdmin(admin.ModelAdmin):
-    list_display = ("id", "client", "provider_code", "country_code", "region", "city", "requested_count", "ready_count", "status", "created_at")
+    list_display = ("id", "client", "provider_code", "country_code", "region", "city", "submitted_count", "requested_count", "ready_count", "status", "created_at")
     list_filter = ("status", "provider_code", "country_code")
     search_fields = ("client__name", "client__office_name", "client__system_number")
-    readonly_fields = ("client", "provider_code", "country_code", "region", "city", "requested_count", "ready_count", "status", "error", "created_at", "updated_at")
+    readonly_fields = ("client", "provider_code", "country_code", "region", "city", "submitted_count", "requested_count", "ready_count", "status", "error", "created_at", "updated_at")
 
     def has_add_permission(self, request):
         return False

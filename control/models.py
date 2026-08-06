@@ -268,6 +268,10 @@ class ProxyGenerationJob(models.Model):
     country_code = models.CharField(max_length=32)
     region = models.CharField(max_length=120, blank=True)
     city = models.CharField(max_length=120, blank=True)
+    submitted_count = models.PositiveSmallIntegerField(
+        default=1,
+        help_text="Number requested by the client before the server safety cap.",
+    )
     requested_count = models.PositiveSmallIntegerField(default=1)
     ready_count = models.PositiveSmallIntegerField(default=0)
     status = models.CharField(max_length=32, default="queued")

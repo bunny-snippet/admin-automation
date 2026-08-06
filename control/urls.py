@@ -7,6 +7,7 @@ app_name = "control"
 urlpatterns = [
     path("", views.home, name="home"),
     path("panel/", panel_views.panel, name="panel"),
+    path("panel/office-audit/", panel_views.panel_office_audit, name="panel-office-audit"),
     path("subadmin/login/", subadmin_views.subadmin_login, name="subadmin-login"),
     path("subadmin/", subadmin_views.subadmin_dashboard, name="subadmin-dashboard"),
     path("subadmin/domains/", subadmin_views.subadmin_domain_activity, name="subadmin-domains"),
