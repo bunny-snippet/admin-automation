@@ -285,13 +285,24 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
             device_id=device_id,
         )
 
-    client = (
-        ClientAccess.objects.select_related("config_bundle")
-        .filter(device_id=device_id)
-        .filter(Q(ipv4=access_ip) | Q(allowed_ips__ipv4=access_ip, allowed_ips__active=True))
-        .distinct()
-        .first()
-    )
+    if settings.LOCAL_TESTING_MODE:
+        # The local test server is bound to loopback and intentionally uses its
+        # first active client/config as a disposable sandbox.  This avoids
+        # copying production device/IP allow-list data into the local SQLite DB.
+        client = (
+            ClientAccess.objects.select_related("config_bundle")
+            .filter(active=True, config_bundle__active=True)
+            .order_by("pk")
+            .first()
+        )
+    else:
+        client = (
+            ClientAccess.objects.select_related("config_bundle")
+            .filter(device_id=device_id)
+            .filter(Q(ipv4=access_ip) | Q(allowed_ips__ipv4=access_ip, allowed_ips__active=True))
+            .distinct()
+            .first()
+        )
     if client is None:
         return _denied(
             "not-whitelisted",
@@ -461,12 +472,14 @@ def _authenticated_client(request: HttpRequest) -> ClientAccess:
                                   max_age=settings.BOOTSTRAP_TOKEN_MAX_AGE)
     if token_payload.get("ip") != access_ip or token_payload.get("device_id", "") != device_id:
         raise signing.BadSignature("Client identity changed")
-    client = ClientAccess.objects.select_related("config_bundle").filter(
-        pk=token_payload.get("client_id"), device_id=device_id,
-        active=True, config_bundle__active=True,
-    ).filter(
-        Q(ipv4=access_ip) | Q(allowed_ips__ipv4=access_ip, allowed_ips__active=True)
-    ).distinct().get()
+    client_query = ClientAccess.objects.select_related("config_bundle").filter(
+        pk=token_payload.get("client_id"), active=True, config_bundle__active=True,
+    )
+    if not settings.LOCAL_TESTING_MODE:
+        client_query = client_query.filter(device_id=device_id).filter(
+            Q(ipv4=access_ip) | Q(allowed_ips__ipv4=access_ip, allowed_ips__active=True)
+        ).distinct()
+    client = client_query.get()
     if token_payload.get("config_version") != client.config_bundle.version:
         raise signing.BadSignature("Configuration changed")
     return client

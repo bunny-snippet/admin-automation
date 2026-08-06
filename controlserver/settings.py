@@ -32,6 +32,7 @@ def env_list(name: str) -> list[str]:
 
 
 DEBUG = env_bool("DEBUG", False)
+LOCAL_TESTING_MODE = env_bool("LOCAL_TESTING_MODE", False)
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "")
 CONFIG_ENCRYPTION_SECRET = os.getenv("CONFIG_ENCRYPTION_SECRET", "")
 if DEBUG:
