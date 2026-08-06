@@ -27,7 +27,11 @@ from .models import (
 )
 
 
-MAX_PROFILES_PER_REQUEST = 3
+# The currently deployed desktop client still expects the server to return the
+# same number of proxy reservations that it submitted.  Keep the upper bound
+# at the API's normal validation limit for this diagnostic release; the client
+# side cap will be reintroduced once the rebuilt EXE is deployed.
+MAX_PROFILES_PER_REQUEST = 50
 from .proxy_jobs import get_or_create_pool_target, reserve_pool_proxies, reserve_static_proxies
 from .tasks import queue_refill_proxy_pool
 from .openapi import OPENAPI_SCHEMA, SWAGGER_HTML
@@ -536,7 +540,7 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
         region = str(body.get("region") or "").strip()[:120]
         city = str(body.get("city") or "").strip()[:120]
         submitted_count = int(body.get("count") or 1)
-        requested_count = min(submitted_count, MAX_PROFILES_PER_REQUEST)
+        requested_count = submitted_count
         if region.casefold() in {"any", "all", "random"}:
             region = ""
         if city.casefold() in {"any", "all", "random"}:
