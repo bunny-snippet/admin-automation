@@ -301,6 +301,62 @@ class ProxyReservation(models.Model):
         return decrypt_text(self.proxy_ciphertext) if self.proxy_ciphertext else ""
 
 
+class ProfileCreateLease(models.Model):
+    """Distributed guard for profile creation in one YS account/group.
+
+    YS exposes a global environment list for an account.  A short-lived,
+    database-backed lease prevents two desktop clients using the same account
+    and browser group from taking each other's before/after profile snapshot.
+    Expiry is intentional so a crashed client cannot block the group forever.
+    """
+
+    lease_key = models.CharField(max_length=180, unique=True)
+    owner_token = models.CharField(max_length=96)
+    client = models.ForeignKey(
+        ClientAccess,
+        on_delete=models.CASCADE,
+        related_name="profile_create_leases",
+    )
+    group_id = models.CharField(max_length=64)
+    requested_count = models.PositiveSmallIntegerField(default=1)
+    expires_at = models.DateTimeField(db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("expires_at",)
+
+
+class ProfileCreateQueue(models.Model):
+    """FIFO wait list for clients sharing one YS account/group."""
+
+    STATUS_CHOICES = (
+        ("queued", "Queued"),
+        ("active", "Active"),
+        ("completed", "Completed"),
+        ("expired", "Expired"),
+    )
+
+    scope_key = models.CharField(max_length=180, db_index=True)
+    request_token = models.CharField(max_length=96, unique=True)
+    lease_token = models.CharField(max_length=96, blank=True, default="")
+    client = models.ForeignKey(
+        ClientAccess,
+        on_delete=models.CASCADE,
+        related_name="profile_create_queue",
+    )
+    group_id = models.CharField(max_length=64)
+    requested_count = models.PositiveSmallIntegerField(default=1)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="queued")
+    expires_at = models.DateTimeField(db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("created_at", "pk")
+        indexes = [models.Index(fields=("scope_key", "status", "created_at"))]
+
+
 class BrowserGroupMapping(models.Model):
     client = models.ForeignKey(ClientAccess, on_delete=models.CASCADE, related_name="browser_groups")
     browser_group_id = models.CharField(max_length=64)

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import hmac
+import hashlib
 import ipaddress
 import json
 import logging
 import re
+import secrets
 from typing import Any
 
-from datetime import timezone as datetime_timezone
+from datetime import timedelta, timezone as datetime_timezone
 
 from django.conf import settings
 from django.core import signing
@@ -23,7 +25,8 @@ from django.views.decorators.http import require_GET, require_POST
 
 from .models import (
     BootstrapAudit, ClientAccess, ExtensionPackage, ProfileActivity, ProfileDomainActivity, Provider, ProxyCountryFile,
-    ProxyGenerationJob, ProxyReservation, ProxyRegionCatalog,
+    ProfileCreateLease, ProfileCreateQueue, ProxyGenerationJob, ProxyReservation,
+    ProxyRegionCatalog,
 )
 
 
@@ -495,6 +498,158 @@ def _proxy_protocol(value: str) -> str:
         "socks5": "socks5",
         "socks5h": "socks5",
     }.get(prefix, "")
+
+
+def _profile_lease_key(client: ClientAccess, group_id: str) -> str:
+    """Return an account-and-group scoped key without storing the API key."""
+    try:
+        payload = client.config_bundle.get_payload()
+    except Exception:
+        payload = {}
+    account_key = str(
+        payload.get("APP_API_KEY")
+        or payload.get("YSBROWSER_API_KEY")
+        or payload.get("API_KEY")
+        or ""
+    ).strip()
+    if account_key:
+        account_scope = hashlib.sha256(account_key.encode("utf-8")).hexdigest()[:32]
+    else:
+        account_scope = f"bundle-{client.config_bundle_id}"
+    return f"profile-create:{account_scope}:{group_id.strip()}"
+
+
+def _lease_group_allowed(client: ClientAccess, group_id: str) -> bool:
+    assigned = str(client.config_bundle.browser_group_id or "").strip()
+    return bool(group_id and (not assigned or assigned == group_id))
+
+
+@csrf_exempt
+@require_POST
+def acquire_profile_lease(request: HttpRequest) -> JsonResponse:
+    """Join a FIFO queue and atomically reserve one YS group for a run."""
+    try:
+        client = _authenticated_client(request)
+        body = json.loads(request.body.decode("utf-8"))
+        group_id = str(body.get("group_id") or "").strip()[:64]
+        requested_count = min(50, max(1, int(body.get("requested_count") or 1)))
+        request_token = str(body.get("request_token") or "").strip()[:96]
+        if not _lease_group_allowed(client, group_id):
+            raise ValueError("Invalid browser group assignment")
+    except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError,
+            signing.BadSignature, signing.SignatureExpired, ClientAccess.DoesNotExist):
+        return _json_response({"allowed": False, "message": "Access denied."}, status=403)
+
+    # Five minutes covers proxy polling plus the YS add/list/open sequence;
+    # a crashed process is released automatically after this deadline.
+    lease_seconds = 300
+    queue_seconds = 43200
+    now = timezone.now()
+    expires_at = now + timedelta(seconds=lease_seconds)
+    queue_expires_at = now + timedelta(seconds=queue_seconds)
+    key = _profile_lease_key(client, group_id)
+    with transaction.atomic():
+        ProfileCreateQueue.objects.filter(
+            scope_key=key, status="queued", expires_at__lte=now,
+        ).update(status="expired")
+        if request_token:
+            try:
+                queue = ProfileCreateQueue.objects.select_for_update().get(
+                    request_token=request_token, scope_key=key, client=client,
+                )
+            except ProfileCreateQueue.DoesNotExist:
+                return _json_response({"allowed": False, "message": "Profile request expired. Please try again."}, status=410)
+            if queue.status == "active" and queue.lease_token:
+                lease = ProfileCreateLease.objects.filter(
+                    lease_key=key, owner_token=queue.lease_token,
+                ).first()
+                if lease and lease.expires_at > now:
+                    return _json_response({"allowed": True, "lease_id": lease.owner_token, "group_id": group_id, "lease_seconds": lease_seconds})
+                queue.status = "queued"
+                queue.lease_token = ""
+                queue.expires_at = queue_expires_at
+                queue.save(update_fields=("status", "lease_token", "expires_at", "updated_at"))
+        else:
+            queue = ProfileCreateQueue.objects.create(
+                scope_key=key,
+                request_token=secrets.token_urlsafe(48),
+                client=client,
+                group_id=group_id,
+                requested_count=requested_count,
+                status="queued",
+                expires_at=queue_expires_at,
+            )
+
+        lease = ProfileCreateLease.objects.select_for_update().filter(lease_key=key).first()
+        if lease and lease.expires_at <= now:
+            ProfileCreateQueue.objects.filter(
+                scope_key=key, status="active", lease_token=lease.owner_token,
+            ).update(status="queued", lease_token="", expires_at=queue_expires_at)
+            lease.delete()
+            lease = None
+
+        head = ProfileCreateQueue.objects.select_for_update().filter(
+            scope_key=key, status="queued", expires_at__gt=now,
+        ).order_by("created_at", "pk").first()
+        if lease or not head or head.pk != queue.pk:
+            position = 1
+            if head and head.pk != queue.pk:
+                position = 1 + ProfileCreateQueue.objects.filter(
+                    scope_key=key, status="queued", expires_at__gt=now,
+                    created_at__lt=queue.created_at,
+                ).count()
+            return _json_response({
+                "allowed": False,
+                "queued": True,
+                "request_token": queue.request_token,
+                "position": position,
+                "retry_after": 5,
+                "message": "Your profile request is queued for this browser group.",
+                "group_id": group_id,
+            })
+
+        owner_token = secrets.token_urlsafe(48)
+        lease = ProfileCreateLease.objects.create(
+            lease_key=key,
+            owner_token=owner_token,
+            client=client,
+            group_id=group_id,
+            requested_count=queue.requested_count,
+            expires_at=expires_at,
+        )
+        queue.status = "active"
+        queue.lease_token = owner_token
+        queue.expires_at = expires_at
+        queue.save(update_fields=("status", "lease_token", "expires_at", "updated_at"))
+    return _json_response({
+        "allowed": True,
+        "lease_id": lease.owner_token,
+        "group_id": group_id,
+        "lease_seconds": lease_seconds,
+    })
+
+
+@csrf_exempt
+@require_POST
+def release_profile_lease(request: HttpRequest) -> JsonResponse:
+    try:
+        client = _authenticated_client(request)
+        body = json.loads(request.body.decode("utf-8"))
+        group_id = str(body.get("group_id") or "").strip()[:64]
+        lease_id = str(body.get("lease_id") or "").strip()[:96]
+        if not lease_id or not _lease_group_allowed(client, group_id):
+            raise ValueError("Invalid profile lease")
+    except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError,
+            signing.BadSignature, signing.SignatureExpired, ClientAccess.DoesNotExist):
+        return _json_response({"allowed": False, "message": "Access denied."}, status=403)
+    key = _profile_lease_key(client, group_id)
+    deleted, _ = ProfileCreateLease.objects.filter(
+        lease_key=key, owner_token=lease_id, client=client,
+    ).delete()
+    ProfileCreateQueue.objects.filter(
+        scope_key=key, lease_token=lease_id, client=client,
+    ).update(status="completed", lease_token="")
+    return _json_response({"allowed": bool(deleted), "released": bool(deleted)})
 
 
 def _job_payload(job: ProxyGenerationJob) -> dict[str, Any]:
