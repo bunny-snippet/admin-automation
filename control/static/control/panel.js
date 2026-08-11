@@ -42,6 +42,7 @@
     route: "overview",
     resourcePage: 1,
     resourceQuery: "",
+    proxyFilters: { bundle: "", provider: "", country: "", status: "" },
     domainPage: 1,
     devicePage: 1,
     deviceFilters: { page_size: "25" },
@@ -468,7 +469,69 @@
     data.accounts.forEach((account) => document.querySelector(`[data-subadmin-account="${account.id}"]`).addEventListener("click", () => { document.querySelectorAll(".subadmin-account").forEach((item) => item.classList.remove("is-active")); document.querySelector(`[data-subadmin-account="${account.id}"]`).classList.add("is-active"); render(account); }));
     render(data.accounts[0]);
   }
+
+  function proxyPoolParams() {
+    const params = new URLSearchParams({
+      page: String(state.resourcePage),
+      page_size: "25",
+      q: state.resourceQuery,
+    });
+    Object.entries(state.proxyFilters).forEach(([key, value]) => {
+      if (value) params.set(key, value);
+    });
+    return params;
+  }
+
+  async function loadProxyPools() {
+    const url = endpoints.resource.replace("__resource__", "proxy-pools");
+    const data = await api(`${url}?${proxyPoolParams()}`);
+    const bundles = data.options?.bundles || [];
+    const providers = data.options?.providers || [];
+    const countries = data.options?.countries || [];
+    const selected = state.proxyFilters;
+    const poolRows = data.rows.map((row) => {
+      const availabilityClass = Number(row.available) === 0 ? "is-danger" : Number(row.available) <= Number(row.threshold || 200) ? "is-warning" : "is-success";
+      const controls = row.active
+        ? `<button class="link-button" data-proxy-action="refill" data-target-id="${e(row.target_id)}">Refill</button><button class="link-button" data-proxy-action="pause" data-target-id="${e(row.target_id)}">Pause</button><button class="link-button danger-link" data-proxy-action="clear" data-target-id="${e(row.target_id)}">Clear & pause</button>`
+        : `<button class="link-button" data-proxy-action="resume" data-target-id="${e(row.target_id)}">Resume</button>`;
+      return `<tr><td><span class="cell-primary">${e(row.config)}</span><div class="cell-muted">${e(row.group_name || "Group") } · ${e(row.group_id || "-")}</div></td><td>${e(row.provider)}</td><td><span class="cell-primary">${e(row.country)}</span><div class="cell-muted">${e(row.location)}</div></td><td><span class="status-pill ${availabilityClass}">${number(row.available)}</span><div class="cell-muted">target ${number(row.target)} · refill below ${number(row.threshold)}</div></td><td>${number(row.reserved)}</td><td>${row.refill_pending ? '<span class="status-pill is-warning">Queued</span>' : row.active ? '<span class="status-pill is-success">Active</span>' : '<span class="status-pill is-danger">Paused</span>'}</td><td class="proxy-actions">${controls}<a class="link-button" href="${e(row.admin_url)}">Admin</a></td></tr>`;
+    }).join("");
+    content.innerHTML = `<div class="page-intro"><div><span class="eyebrow">Infrastructure</span><h2>Proxy pool manager</h2><p>Track every bundle/group, provider and country. Refill, pause or clear a specific pool without terminal commands.</p></div><a class="button button-secondary" href="${e(data.admin_url)}">Django Admin</a></div><form class="toolbar proxy-pool-toolbar" id="proxy-pool-filters"><div class="field field-wide"><label>Search</label><input name="q" value="${e(state.resourceQuery)}" placeholder="Bundle, group, provider or country"></div><div class="field"><label>Bundle / group</label><select name="bundle"><option value="">All bundles</option>${bundles.map((bundle) => `<option value="${e(bundle.id)}" ${String(selected.bundle) === String(bundle.id) ? "selected" : ""}>${e(bundle.name)} · ${e(bundle.browser_group_id || "-")}</option>`).join("")}</select></div><div class="field"><label>Provider</label><select name="provider"><option value="">All providers</option>${providers.map((value) => `<option value="${e(value)}" ${selected.provider === value ? "selected" : ""}>${e(value)}</option>`).join("")}</select></div><div class="field"><label>Country</label><select name="country"><option value="">All countries</option>${countries.map((value) => `<option value="${e(value)}" ${selected.country === value ? "selected" : ""}>${e(value)}</option>`).join("")}</select></div><div class="field"><label>Stock</label><select name="status"><option value="">All</option><option value="empty" ${selected.status === "empty" ? "selected" : ""}>Empty (0)</option><option value="low" ${selected.status === "low" ? "selected" : ""}>Low (≤200)</option><option value="ready" ${selected.status === "ready" ? "selected" : ""}>Ready (&gt;200)</option></select></div><button class="button button-primary" type="submit">Apply filters</button><button class="button button-secondary" type="button" id="clear-proxy-filters">Clear</button></form><div class="metric-grid">${metricCard("Pool targets", data.metrics.total, "Active targets")}${metricCard("Low stock", data.metrics.low, "At or below threshold")}${metricCard("Empty pools", data.metrics.empty, "No available proxy")}${metricCard("Available proxies", data.metrics.available, "Across active pools")}</div><article class="panel-card"><div class="panel-header"><div><h3>Pool inventory</h3><p>${number(data.pagination.total)} matching targets · clear only affects unreserved entries</p></div></div><div class="panel-body-flush"><div class="table-wrap"><table class="data-table management-table proxy-pool-table"><thead><tr><th>Bundle / group</th><th>Provider</th><th>Country / location</th><th>Available</th><th>Reserved</th><th>Status</th><th>Actions</th></tr></thead><tbody>${poolRows || '<tr><td colspan="7" class="empty-state">No proxy pools match these filters.</td></tr>'}</tbody></table></div></div>${pagination(data.pagination, "resource")}</article>`;
+    document.getElementById("proxy-pool-filters").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const values = new FormData(event.currentTarget);
+      state.resourceQuery = String(values.get("q") || "").trim();
+      state.proxyFilters = {
+        bundle: String(values.get("bundle") || ""),
+        provider: String(values.get("provider") || ""),
+        country: String(values.get("country") || ""),
+        status: String(values.get("status") || ""),
+      };
+      state.resourcePage = 1;
+      loadProxyPools();
+    });
+    document.getElementById("clear-proxy-filters").addEventListener("click", () => {
+      state.resourceQuery = "";
+      state.proxyFilters = { bundle: "", provider: "", country: "", status: "" };
+      state.resourcePage = 1;
+      loadProxyPools();
+    });
+    document.querySelectorAll("[data-proxy-action]").forEach((button) => button.addEventListener("click", async () => {
+      const action = button.dataset.proxyAction;
+      if (action === "clear" && !window.confirm("Clear all available proxies for this target and pause it? Reserved proxies will be kept.")) return;
+      try {
+        await writeApi(url, { action, target_id: button.dataset.targetId });
+        await loadProxyPools();
+      } catch (error) { showError(error); }
+    }));
+    bindPagination("resource");
+  }
+
   async function loadResource() {
+    if (state.route === "proxy-pools") {
+      await loadProxyPools();
+      return;
+    }
     const url = endpoints.resource.replace("__resource__", encodeURIComponent(state.route));
     const params = new URLSearchParams({
       page: String(state.resourcePage),

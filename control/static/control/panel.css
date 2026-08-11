@@ -334,6 +334,11 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .panel-header p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
 .panel-body { padding: 18px 19px; }
 .panel-body-flush { padding: 0; }
+.proxy-pool-toolbar { align-items: end; }
+.proxy-pool-table { min-width: 1180px; }
+.proxy-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.danger-link { color: #b42318; }
+.danger-link:hover { color: #8f1d14; }
 
 .table-wrap { width: 100%; overflow: auto; }
 .data-table { width: 100%; border-collapse: collapse; white-space: nowrap; }

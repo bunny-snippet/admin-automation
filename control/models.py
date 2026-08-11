@@ -255,6 +255,14 @@ class ProxyPoolEntry(models.Model):
     tested_at = models.DateTimeField(blank=True, null=True)
     reserved_at = models.DateTimeField(blank=True, null=True)
 
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=("target", "state"),
+                name="poolentry_target_state_idx",
+            ),
+        ]
+
     def set_proxy(self, value: str) -> None:
         self.proxy_ciphertext = encrypt_text(value)
 

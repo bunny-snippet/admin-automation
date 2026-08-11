@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Callable
 
 from django.contrib.admin.views.decorators import staff_member_required
@@ -7,7 +8,8 @@ from django.core.paginator import Paginator
 from django.db.models import Count, Q
 from django.http import HttpRequest, JsonResponse
 from django.urls import reverse
-from django.views.decorators.http import require_GET
+from django.db import transaction
+from django.views.decorators.http import require_http_methods
 
 from .models import (
     BootstrapAudit,
@@ -24,6 +26,7 @@ from .models import (
     ProxyReservation,
 )
 from .panel_views import admin_change, bounded_int, iso, panel_json, profile_display_name
+from .tasks import queue_refill_proxy_pool
 
 
 def _column(key: str, label: str, kind: str = "text") -> dict[str, str]:
@@ -63,8 +66,58 @@ def _resource_page(
 
 
 @staff_member_required(login_url="admin:login")
-@require_GET
+@require_http_methods(["GET", "POST"])
 def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
+    if resource == "proxy-pools" and request.method == "POST":
+        try:
+            body = json.loads(request.body or "{}")
+        except (TypeError, ValueError):
+            return panel_json({"ok": False, "message": "Invalid JSON body."}, status=400)
+        if not isinstance(body, dict):
+            return panel_json({"ok": False, "message": "JSON body must be an object."}, status=400)
+
+        action = str(body.get("action") or "").strip().lower()
+        try:
+            target_id = int(body.get("target_id"))
+        except (TypeError, ValueError):
+            return panel_json({"ok": False, "message": "A valid pool target is required."}, status=400)
+
+        if action not in {"refill", "pause", "resume", "clear"}:
+            return panel_json({"ok": False, "message": "Unknown proxy pool action."}, status=400)
+
+        try:
+            with transaction.atomic():
+                target = ProxyPoolTarget.objects.select_for_update().get(pk=target_id)
+                if action == "clear":
+                    # Clear only unreserved inventory. Reserved proxies remain
+                    # auditable and are never invalidated by this panel action.
+                    deleted, _ = target.entries.filter(state="available").delete()
+                    target.active = False
+                    target.refill_pending = False
+                    target.save(update_fields=("active", "refill_pending", "updated_at"))
+                    message = f"Cleared {deleted} available proxy entries and paused this pool."
+                elif action == "pause":
+                    target.active = False
+                    target.save(update_fields=("active", "updated_at"))
+                    message = "Proxy pool paused. Existing reservations were kept."
+                elif action == "resume":
+                    target.active = True
+                    target.save(update_fields=("active", "updated_at"))
+                    message = "Proxy pool resumed."
+                else:
+                    if not target.active:
+                        return panel_json({"ok": False, "message": "Resume this pool before refilling it."}, status=400)
+                    message = "Refill queued if this target was not already pending."
+        except ProxyPoolTarget.DoesNotExist:
+            return panel_json({"ok": False, "message": "Proxy pool target not found."}, status=404)
+
+        if action in {"refill", "resume"}:
+            try:
+                queue_refill_proxy_pool(target_id)
+            except Exception as exc:
+                return panel_json({"ok": False, "message": f"Could not queue refill: {exc}"}, status=500)
+        return panel_json({"ok": True, "message": message})
+
     query = str(request.GET.get("q") or "").strip()
     t = lambda key, label: _column(key, label)
     d = lambda key, label: _column(key, label, "date")
@@ -269,6 +322,10 @@ def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
             available_count=Count("entries", filter=Q(entries__state="available")),
             reserved_count=Count("entries", filter=Q(entries__state="reserved")),
         )
+        bundle = str(request.GET.get("bundle") or "").strip()
+        provider = str(request.GET.get("provider") or "").strip().upper()
+        country = str(request.GET.get("country") or "").strip().upper()
+        status = str(request.GET.get("status") or "").strip().lower()
         if query:
             queryset = queryset.filter(
                 Q(provider_code__icontains=query)
@@ -277,34 +334,101 @@ def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
                 | Q(city__icontains=query)
                 | Q(config_bundle__name__icontains=query)
             )
-        return _resource_page(
-            request,
-            queryset.order_by("provider_code", "country_code"),
-            lambda row: {
+        if bundle:
+            queryset = queryset.filter(config_bundle_id=bundle)
+        if provider:
+            queryset = queryset.filter(provider_code=provider)
+        if country:
+            queryset = queryset.filter(country_code=country)
+        if status == "empty":
+            queryset = queryset.filter(available_count=0)
+        elif status == "low":
+            queryset = queryset.filter(available_count__lte=200)
+        elif status == "ready":
+            queryset = queryset.filter(available_count__gt=200)
+
+        bundle_options = list(
+            ConfigBundle.objects.filter(active=True, clients__active=True)
+            .distinct()
+            .order_by("name")
+            .values("id", "name", "browser_group_name", "browser_group_id")
+        )
+        provider_options = list(
+            ProxyPoolTarget.objects.filter(active=True)
+            .values_list("provider_code", flat=True)
+            .distinct()
+            .order_by("provider_code")
+        )
+        country_options = list(
+            ProxyPoolTarget.objects.filter(active=True)
+            .values_list("country_code", flat=True)
+            .distinct()
+            .order_by("country_code")
+        )
+        all_targets = ProxyPoolTarget.objects.filter(active=True).annotate(
+            available_count=Count("entries", filter=Q(entries__state="available")),
+        )
+        metrics = {
+            "total": all_targets.count(),
+            "low": all_targets.filter(available_count__lte=200).count(),
+            "empty": all_targets.filter(available_count=0).count(),
+            "available": ProxyPoolEntry.objects.filter(state="available").count(),
+        }
+        columns = [
+            t("provider", "Provider"), t("country", "Country"),
+            t("location", "Location"), t("config", "Bundle"),
+            t("group_name", "Group"), t("group_id", "Group ID"),
+            t("target", "Target"), t("threshold", "Refill below"),
+            t("available", "Available"), t("reserved", "Reserved"),
+            s("active", "Active"),
+        ]
+        serializer = lambda row: {
+                "target_id": row.pk,
                 "provider": row.provider_code,
                 "country": row.country_code,
                 "location": " / ".join(
                     value for value in (row.region, row.city) if value
                 ) or "Any",
                 "config": row.config_bundle.name,
+                "group_name": row.config_bundle.browser_group_name,
+                "group_id": row.config_bundle.browser_group_id,
                 "target": row.target_count,
                 "threshold": row.replenish_below,
                 "available": row.available_count,
                 "reserved": row.reserved_count,
                 "active": row.active,
+                "refill_pending": row.refill_pending,
                 "admin_url": admin_change("proxypooltarget", row.pk),
+            }
+        page_size = bounded_int(request.GET.get("page_size"), 25, 10, 100)
+        paginator = Paginator(queryset.order_by("config_bundle__name", "provider_code", "country_code"), page_size)
+        page = paginator.get_page(bounded_int(request.GET.get("page"), 1, 1, 1000000))
+        return panel_json({
+            "kind": "proxy-pools",
+            "title": "Proxy pool manager",
+            "description": "Track every group/provider/country pool and control refill or clearing without terminal commands.",
+            "columns": columns,
+            "rows": [serializer(row) for row in page.object_list],
+            "admin_url": reverse("admin:control_proxypooltarget_changelist"),
+            "metrics": metrics,
+            "filters": {
+                "q": query, "bundle": bundle, "provider": provider,
+                "country": country, "status": status,
             },
-            title="Proxy pools",
-            description="Country inventory targets, availability and refill thresholds.",
-            columns=[
-                t("provider", "Provider"), t("country", "Country"),
-                t("location", "Location"), t("config", "Config"),
-                t("target", "Target"), t("threshold", "Refill below"),
-                t("available", "Available"), t("reserved", "Reserved"),
-                s("active", "Active"),
-            ],
-            admin_url=reverse("admin:control_proxypooltarget_changelist"),
-        )
+            "options": {
+                "bundles": bundle_options,
+                "providers": provider_options,
+                "countries": country_options,
+            },
+            "pagination": {
+                "page": page.number,
+                "pages": paginator.num_pages,
+                "page_size": page_size,
+                "total": paginator.count,
+                "has_previous": page.has_previous(),
+                "has_next": page.has_next(),
+            },
+        })
 
     if resource == "proxy-inventory":
         queryset = ProxyPoolEntry.objects.select_related("target", "reserved_client")
