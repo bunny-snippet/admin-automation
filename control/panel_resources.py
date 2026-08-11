@@ -422,11 +422,17 @@ def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
         page_queryset = queryset.annotate(
             available_count=Count("entries", filter=Q(entries__state="available")),
             reserved_count=Count("entries", filter=Q(entries__state="reserved")),
-        ).order_by("config_bundle__name", "provider_code", "country_code", "pk")
+        # Primary-key ordering avoids a filesort across the entire target table
+        # (ordering by config_bundle__name was the remaining slow first-load
+        # query when the database contains hundreds of thousands of targets).
+        ).order_by("pk")
         page_rows = list(page_queryset[offset:offset + page_size + 1])
         has_next = len(page_rows) > page_size
         rows = page_rows[:page_size]
-        page_total = queryset.count() if not status and page_number == 1 else None
+        # Deliberately avoid a full-table COUNT on every refresh.  The UI can
+        # navigate using has_next/has_previous, while filters narrow the list
+        # without blocking the first render on a remote MySQL connection.
+        page_total = None
         return panel_json({
             "kind": "proxy-pools",
             "title": "Proxy pool manager",
