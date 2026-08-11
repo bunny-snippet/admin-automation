@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 from django.contrib.admin.views.decorators import staff_member_required
 from django.core.paginator import Paginator
+from django.core.cache import cache
 from django.db.models import Count, Q
 from django.http import HttpRequest, JsonResponse
 from django.urls import reverse
@@ -318,10 +319,12 @@ def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
         )
 
     if resource == "proxy-pools":
-        queryset = ProxyPoolTarget.objects.select_related("config_bundle").annotate(
-            available_count=Count("entries", filter=Q(entries__state="available")),
-            reserved_count=Count("entries", filter=Q(entries__state="reserved")),
-        )
+        # Keep the expensive entry aggregates out of the unfiltered count query.
+        # This page can contain hundreds of thousands of targets, so annotating
+        # the complete queryset before Paginator.count() caused every refresh to
+        # scan the entry table.  Build a cheap target queryset first, then add
+        # counts only to the small page that is rendered below.
+        queryset = ProxyPoolTarget.objects.select_related("config_bundle")
         bundle = str(request.GET.get("bundle") or "").strip()
         provider = str(request.GET.get("provider") or "").strip().upper()
         country = str(request.GET.get("country") or "").strip().upper()
@@ -340,40 +343,50 @@ def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
             queryset = queryset.filter(provider_code=provider)
         if country:
             queryset = queryset.filter(country_code=country)
-        if status == "empty":
-            queryset = queryset.filter(available_count=0)
-        elif status == "low":
-            queryset = queryset.filter(available_count__lte=200)
-        elif status == "ready":
-            queryset = queryset.filter(available_count__gt=200)
+        # Stock filters still need an aggregate, but are deliberately handled
+        # after the cheap identity filters above.  The normal (unfiltered) page
+        # no longer performs this join for the whole table.
+        if status in {"empty", "low", "ready"}:
+            queryset = queryset.annotate(
+                available_count=Count("entries", filter=Q(entries__state="available")),
+            )
+            if status == "empty":
+                queryset = queryset.filter(available_count=0)
+            elif status == "low":
+                queryset = queryset.filter(available_count__lte=200)
+            else:
+                queryset = queryset.filter(available_count__gt=200)
 
-        bundle_options = list(
-            ConfigBundle.objects.filter(active=True, clients__active=True)
-            .distinct()
-            .order_by("name")
-            .values("id", "name", "browser_group_name", "browser_group_id")
-        )
-        provider_options = list(
-            ProxyPoolTarget.objects.filter(active=True)
-            .values_list("provider_code", flat=True)
-            .distinct()
-            .order_by("provider_code")
-        )
-        country_options = list(
-            ProxyPoolTarget.objects.filter(active=True)
-            .values_list("country_code", flat=True)
-            .distinct()
-            .order_by("country_code")
-        )
-        all_targets = ProxyPoolTarget.objects.filter(active=True).annotate(
-            available_count=Count("entries", filter=Q(entries__state="available")),
-        )
-        metrics = {
-            "total": all_targets.count(),
-            "low": all_targets.filter(available_count__lte=200).count(),
-            "empty": all_targets.filter(available_count=0).count(),
-            "available": ProxyPoolEntry.objects.filter(state="available").count(),
-        }
+        # These option lists change rarely, while the panel can be refreshed
+        # repeatedly during operations.  Cache them briefly so every refresh
+        # does not run three DISTINCT scans over the large target table.
+        option_cache_key = "panel:proxy-pool-options:v1"
+        options = cache.get(option_cache_key)
+        if options is None:
+            options = {
+                "bundles": list(
+                    ConfigBundle.objects.filter(active=True, clients__active=True)
+                    .distinct()
+                    .order_by("name")
+                    .values("id", "name", "browser_group_name", "browser_group_id")
+                ),
+                "providers": list(
+                    ProxyPoolTarget.objects.filter(active=True)
+                    .values_list("provider_code", flat=True)
+                    .distinct()
+                    .order_by("provider_code")
+                ),
+                "countries": list(
+                    ProxyPoolTarget.objects.filter(active=True)
+                    .values_list("country_code", flat=True)
+                    .distinct()
+                    .order_by("country_code")
+                ),
+            }
+            cache.set(option_cache_key, options, 60)
+        bundle_options = options["bundles"]
+        provider_options = options["providers"]
+        country_options = options["countries"]
         columns = [
             t("provider", "Provider"), t("country", "Country"),
             t("location", "Location"), t("config", "Bundle"),
@@ -394,23 +407,43 @@ def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
                 "group_id": row.config_bundle.browser_group_id,
                 "target": row.target_count,
                 "threshold": row.replenish_below,
-                "available": row.available_count,
-                "reserved": row.reserved_count,
+                "available": getattr(row, "available_count", 0),
+                "reserved": getattr(row, "reserved_count", 0),
                 "active": row.active,
                 "refill_pending": row.refill_pending,
                 "admin_url": admin_change("proxypooltarget", row.pk),
             }
         page_size = bounded_int(request.GET.get("page_size"), 25, 10, 100)
-        paginator = Paginator(queryset.order_by("config_bundle__name", "provider_code", "country_code"), page_size)
-        page = paginator.get_page(bounded_int(request.GET.get("page"), 1, 1, 1000000))
+        page_number = bounded_int(request.GET.get("page"), 1, 1, 1000000)
+        offset = (page_number - 1) * page_size
+        # Fetch one extra row instead of running Paginator.count() over an
+        # annotated join.  This keeps first paint fast and still gives the UI a
+        # reliable Next button.  Counts are added only for the visible rows.
+        page_queryset = queryset.annotate(
+            available_count=Count("entries", filter=Q(entries__state="available")),
+            reserved_count=Count("entries", filter=Q(entries__state="reserved")),
+        ).order_by("config_bundle__name", "provider_code", "country_code", "pk")
+        page_rows = list(page_queryset[offset:offset + page_size + 1])
+        has_next = len(page_rows) > page_size
+        rows = page_rows[:page_size]
+        page_total = queryset.count() if not status and page_number == 1 else None
         return panel_json({
             "kind": "proxy-pools",
             "title": "Proxy pool manager",
             "description": "Track every group/provider/country pool and control refill or clearing without terminal commands.",
             "columns": columns,
-            "rows": [serializer(row) for row in page.object_list],
+            "rows": [serializer(row) for row in rows],
             "admin_url": reverse("admin:control_proxypooltarget_changelist"),
-            "metrics": metrics,
+            # Metrics intentionally describe the visible page.  Global stock
+            # aggregates are available through filters and no longer block the
+            # panel on a full-table scan.
+            "metrics": {
+                "total": page_total if page_total is not None else len(rows),
+                "low": sum(1 for row in rows if int(getattr(row, "available_count", 0)) <= 200),
+                "empty": sum(1 for row in rows if int(getattr(row, "available_count", 0)) == 0),
+                "available": sum(int(getattr(row, "available_count", 0)) for row in rows),
+                "scope": "matching targets on this page" if page_total is None else "matching targets",
+            },
             "filters": {
                 "q": query, "bundle": bundle, "provider": provider,
                 "country": country, "status": status,
@@ -421,12 +454,12 @@ def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
                 "countries": country_options,
             },
             "pagination": {
-                "page": page.number,
-                "pages": paginator.num_pages,
+                "page": page_number,
+                "pages": ((page_total + page_size - 1) // page_size) if page_total is not None else None,
                 "page_size": page_size,
-                "total": paginator.count,
-                "has_previous": page.has_previous(),
-                "has_next": page.has_next(),
+                "total": page_total,
+                "has_previous": page_number > 1,
+                "has_next": has_next,
             },
         })
 
