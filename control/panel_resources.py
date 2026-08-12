@@ -525,7 +525,10 @@ def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
                     value for value in (row.region, row.city) if value
                 ) or "Any",
                 "submitted_count": getattr(row, "submitted_count", row.requested_count),
-                "progress": f"{row.ready_count} / {row.requested_count}",
+                "progress": (
+                    f"{row.ready_count} / "
+                    f"{max(row.requested_count, row.candidate_count)}"
+                ),
                 "status": row.status,
                 "error": row.error,
                 "created_at": iso(row.created_at),

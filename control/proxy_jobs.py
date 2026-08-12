@@ -21,6 +21,14 @@ def proxy_fingerprint(value: str) -> str:
     return hashlib.sha256(value.strip().encode("utf-8")).hexdigest()
 
 
+def reservation_target(job: ProxyGenerationJob) -> int:
+    """Candidates may exceed profiles when local quality testing is enabled."""
+    return max(
+        int(job.requested_count or 1),
+        int(getattr(job, "candidate_count", 1) or 1),
+    )
+
+
 
 def _locked(queryset):
     """Avoid serialising independent client reservations on MySQL 8+."""
@@ -59,7 +67,7 @@ def reserve_static_proxies(
     )
     if source is None:
         return []
-    remaining = max(0, job.requested_count - job.reservations.count())
+    remaining = max(0, reservation_target(job) - job.reservations.count())
     reservations: list[ProxyReservation] = []
     for value in usable_lines(source.get_content()):
         if len(reservations) >= remaining:
@@ -94,7 +102,7 @@ def reserve_pool_proxies(
     city: str = "",
 ) -> list[ProxyReservation]:
     """Atomically issue unused, pre-generated pool entries exactly once."""
-    remaining = max(0, job.requested_count - job.reservations.count())
+    remaining = max(0, reservation_target(job) - job.reservations.count())
     if not remaining:
         return []
     entries = (
@@ -159,7 +167,7 @@ def fulfill_waiting_jobs(target: ProxyPoolTarget) -> int:
             city=job.city,
         )
         ready_count = job.reservations.count()
-        if ready_count >= job.requested_count:
+        if ready_count >= reservation_target(job):
             status = "ready"
             completed += 1
         elif ready_count:

@@ -671,6 +671,10 @@ def _job_payload(job: ProxyGenerationJob) -> dict[str, Any]:
         "status": job.status,
         "submitted_count": job.submitted_count,
         "requested_count": job.requested_count,
+        "candidate_count": max(
+            int(job.requested_count),
+            int(getattr(job, "candidate_count", 1) or 1),
+        ),
         "max_profiles_per_request": MAX_PROFILES_PER_REQUEST,
         "was_capped": job.submitted_count > job.requested_count,
         "ready_count": job.ready_count,
@@ -709,11 +713,19 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
         city = str(body.get("city") or "").strip()[:120]
         submitted_count = int(body.get("count") or 1)
         requested_count = submitted_count
+        candidate_count = int(
+            body.get("candidate_count") or requested_count
+        )
         if region.casefold() in {"any", "all", "random"}:
             region = ""
         if city.casefold() in {"any", "all", "random"}:
             city = ""
-        if not provider_code or not country_code or not 1 <= submitted_count <= 50:
+        if (
+            not provider_code
+            or not country_code
+            or not 1 <= submitted_count <= MAX_PROFILES_PER_REQUEST
+            or not requested_count <= candidate_count <= 50
+        ):
             raise ValueError("Invalid proxy request")
         city = ""
         if provider_code not in {"P1", "P2"}:
@@ -734,17 +746,19 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
         job = ProxyGenerationJob.objects.create(
             client=client, provider_code=provider_code, country_code=country_code,
             region=region, city=city, submitted_count=submitted_count,
-            requested_count=requested_count, status="queued",
+            requested_count=requested_count,
+            candidate_count=candidate_count,
+            status="queued",
         )
         reservations = reserve_pool_proxies(
             client=client, job=job, provider_code=provider_code, country_code=country_code, region=region, city=city,
         )
-        if len(reservations) < requested_count:
+        if len(reservations) < candidate_count:
             reservations += reserve_static_proxies(
                 client=client, job=job, provider_code=provider_code, country_code=country_code, region=region, city=city,
             )
         job.ready_count = len(reservations)
-        if job.ready_count == job.requested_count:
+        if job.ready_count >= candidate_count:
             job.status = "ready"
         elif job.ready_count:
             job.status = "partial"

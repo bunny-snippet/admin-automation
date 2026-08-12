@@ -358,6 +358,39 @@ class ControlApiTests(TestCase):
         )
         self.assertEqual(activity.status_code, 201)
 
+    def test_proxy_job_keeps_profile_count_separate_from_quality_candidates(self):
+        self.country.set_content(
+            "\n".join(
+                f"host:{port}:user:pass"
+                for port in range(2000, 2005)
+            )
+            + "\n"
+        )
+        self.country.save()
+        token = self.bootstrap().json()["access_token"]
+        response = self.client.post(
+            reverse("control:proxy-job-create"),
+            data=json.dumps({
+                "provider": "P1",
+                "country": "US",
+                "count": 2,
+                "candidate_count": 5,
+            }),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+            HTTP_X_DEVICE_ID="device-one",
+            REMOTE_ADDR="203.0.113.10",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        job = response.json()["job"]
+        self.assertEqual(job["submitted_count"], 2)
+        self.assertEqual(job["requested_count"], 2)
+        self.assertEqual(job["candidate_count"], 5)
+        self.assertEqual(job["ready_count"], 5)
+        self.assertEqual(len(job["proxies"]), 5)
+        self.assertEqual(job["status"], "ready")
+
     def test_proxy_job_returns_per_line_socks5_protocol(self):
         country = ProxyCountryFile(
             provider=self.provider,

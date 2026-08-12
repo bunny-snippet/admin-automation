@@ -281,6 +281,13 @@ class ProxyGenerationJob(models.Model):
         help_text="Number requested by the client before the server safety cap.",
     )
     requested_count = models.PositiveSmallIntegerField(default=1)
+    candidate_count = models.PositiveSmallIntegerField(
+        default=1,
+        help_text=(
+            "Maximum proxy candidates reserved for quality testing; profile "
+            "counts continue to use requested_count."
+        ),
+    )
     ready_count = models.PositiveSmallIntegerField(default=0)
     status = models.CharField(max_length=32, default="queued")
     error = models.TextField(blank=True)
