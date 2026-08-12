@@ -559,16 +559,25 @@ def acquire_profile_lease(request: HttpRequest) -> JsonResponse:
                 )
             except ProfileCreateQueue.DoesNotExist:
                 return _json_response({"allowed": False, "message": "Profile request expired. Please try again."}, status=410)
+            if queue.status in {"completed", "expired"}:
+                return _json_response({"allowed": False, "message": "Profile request expired. Please try again."}, status=410)
             if queue.status == "active" and queue.lease_token:
                 lease = ProfileCreateLease.objects.filter(
                     lease_key=key, owner_token=queue.lease_token,
                 ).first()
                 if lease and lease.expires_at > now:
                     return _json_response({"allowed": True, "lease_id": lease.owner_token, "group_id": group_id, "lease_seconds": lease_seconds})
-                queue.status = "queued"
+                # This request already owned a lease and then stopped renewing
+                # it.  Re-queuing the old row at its original FIFO position
+                # leaves a dead request at the head for up to twelve hours.
+                # Expire it and make the caller submit a fresh request instead.
+                if lease:
+                    lease.delete()
+                queue.status = "expired"
                 queue.lease_token = ""
-                queue.expires_at = queue_expires_at
+                queue.expires_at = now
                 queue.save(update_fields=("status", "lease_token", "expires_at", "updated_at"))
+                return _json_response({"allowed": False, "message": "Profile request expired. Please try again."}, status=410)
         else:
             queue = ProfileCreateQueue.objects.create(
                 scope_key=key,
@@ -582,9 +591,12 @@ def acquire_profile_lease(request: HttpRequest) -> JsonResponse:
 
         lease = ProfileCreateLease.objects.select_for_update().filter(lease_key=key).first()
         if lease and lease.expires_at <= now:
+            # A crashed client must leave the queue completely.  Re-queuing its
+            # active row creates a permanent FIFO blocker because that client
+            # will never poll its request token again.
             ProfileCreateQueue.objects.filter(
                 scope_key=key, status="active", lease_token=lease.owner_token,
-            ).update(status="queued", lease_token="", expires_at=queue_expires_at)
+            ).update(status="expired", lease_token="", expires_at=now)
             lease.delete()
             lease = None
 

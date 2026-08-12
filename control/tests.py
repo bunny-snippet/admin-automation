@@ -16,7 +16,7 @@ from .admin import import_catalog_zip
 from .models import (
     BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, ProfileDomainActivity,
     MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyPoolTarget,
-    ProxyReservation,
+    ProxyReservation, ProfileCreateLease, ProfileCreateQueue,
 )
 from .proxy_jobs import reserve_pool_proxies
 from .tasks import (
@@ -390,6 +390,66 @@ class ControlApiTests(TestCase):
         self.assertEqual(job["ready_count"], 5)
         self.assertEqual(len(job["proxies"]), 5)
         self.assertEqual(job["status"], "ready")
+
+    def test_expired_profile_lease_does_not_block_the_next_device(self):
+        second = ClientAccess.objects.create(
+            name="Office system 2",
+            ipv4="203.0.113.10",
+            device_id="device-two",
+            office_name="1115",
+            system_number="2",
+            profile_name="Device Beta",
+            config_bundle=self.bundle,
+        )
+        first_token = self.bootstrap().json()["access_token"]
+        second_token = self.bootstrap(device_id="device-two").json()["access_token"]
+
+        first = self.client.post(
+            reverse("control:profile-lease-acquire"),
+            data=json.dumps({"group_id": "2255", "requested_count": 2}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {first_token}",
+            HTTP_X_DEVICE_ID="device-one",
+            HTTP_X_CLIENT_IPV4="203.0.113.10",
+            REMOTE_ADDR="203.0.113.10",
+        )
+        self.assertTrue(first.json()["allowed"])
+
+        queued = self.client.post(
+            reverse("control:profile-lease-acquire"),
+            data=json.dumps({"group_id": "2255", "requested_count": 2}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {second_token}",
+            HTTP_X_DEVICE_ID="device-two",
+            HTTP_X_CLIENT_IPV4="203.0.113.10",
+            REMOTE_ADDR="203.0.113.10",
+        )
+        self.assertTrue(queued.json()["queued"])
+
+        ProfileCreateLease.objects.update(
+            expires_at=timezone.now() - timedelta(seconds=1)
+        )
+        acquired = self.client.post(
+            reverse("control:profile-lease-acquire"),
+            data=json.dumps({
+                "group_id": "2255",
+                "requested_count": 2,
+                "request_token": queued.json()["request_token"],
+            }),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {second_token}",
+            HTTP_X_DEVICE_ID="device-two",
+            HTTP_X_CLIENT_IPV4="203.0.113.10",
+            REMOTE_ADDR="203.0.113.10",
+        )
+
+        self.assertTrue(acquired.json()["allowed"])
+        stale = ProfileCreateQueue.objects.get(client=self.client_access)
+        self.assertEqual(stale.status, "expired")
+        self.assertEqual(
+            ProfileCreateQueue.objects.get(client=second).status,
+            "active",
+        )
 
     def test_proxy_job_returns_per_line_socks5_protocol(self):
         country = ProxyCountryFile(
