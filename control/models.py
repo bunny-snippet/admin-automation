@@ -295,6 +295,15 @@ class ProxyGenerationJob(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
 
+class OfficeAuditRequest(ProxyGenerationJob):
+    """Admin-facing request rows used by Office profile audit."""
+
+    class Meta:
+        proxy = True
+        verbose_name = "Office audit request"
+        verbose_name_plural = "Office audit requests"
+
+
 class ProxyReservation(models.Model):
     client = models.ForeignKey(ClientAccess, on_delete=models.CASCADE, related_name="proxy_reservations")
     job = models.ForeignKey(ProxyGenerationJob, on_delete=models.SET_NULL, null=True, blank=True, related_name="reservations")
@@ -403,6 +412,20 @@ class ProfileActivity(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 
+class OfficeProfileAudit(ProfileActivity):
+    """Admin-facing view of lifecycle rows used by Office profile audit.
+
+    This proxy deliberately shares the ProfileActivity table.  It gives the
+    control staff a clearly named Django Admin module without duplicating any
+    audit data or changing the desktop/API contract.
+    """
+
+    class Meta:
+        proxy = True
+        verbose_name = "Office profile audit log"
+        verbose_name_plural = "Office profile audit logs"
+
+
 class ProfileDomainActivity(models.Model):
     client = models.ForeignKey(
         ClientAccess,
@@ -449,6 +472,15 @@ class ProfileDomainActivity(models.Model):
 
     def __str__(self) -> str:
         return f"{self.profile_id} / {self.domain}"
+
+
+class OfficeAuditDomain(ProfileDomainActivity):
+    """Admin-facing domain rows used by Office profile audit."""
+
+    class Meta:
+        proxy = True
+        verbose_name = "Office audit domain log"
+        verbose_name_plural = "Office audit domain logs"
 
 
 class BootstrapAudit(models.Model):

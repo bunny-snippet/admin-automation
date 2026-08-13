@@ -20,7 +20,7 @@ from django.urls import path, reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
-from .models import (BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyReservation, ProfileActivity, ProfileDomainActivity, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry, ProxyRegionCatalog, SubAdminAccount, SubAdminDomainExclusion, SubAdminScopeExclusion, ClientAccessIP)
+from .models import (BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, OfficeAuditRequest, ProxyReservation, ProfileActivity, OfficeProfileAudit, ProfileDomainActivity, OfficeAuditDomain, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry, ProxyRegionCatalog, SubAdminAccount, SubAdminDomainExclusion, SubAdminScopeExclusion, ClientAccessIP)
 from .tasks import queue_refill_proxy_pool
 
 
@@ -694,6 +694,87 @@ class ProxyGenerationJobAdmin(admin.ModelAdmin):
         return False
 
 
+@admin.register(OfficeAuditRequest)
+class OfficeAuditRequestAdmin(admin.ModelAdmin):
+    """Manage request/command rows displayed by Office profile audit."""
+
+    list_display = (
+        "created_at",
+        "office",
+        "system_number",
+        "device_name",
+        "provider_code",
+        "country_code",
+        "submitted_count",
+        "requested_count",
+        "ready_count",
+        "status",
+        "error_preview",
+    )
+    list_filter = (
+        ("created_at", admin.DateFieldListFilter),
+        "client__office_name",
+        "status",
+        "provider_code",
+        "country_code",
+        "client__config_bundle",
+    )
+    search_fields = (
+        "client__office_name",
+        "client__name",
+        "client__system_number",
+        "client__ipv4",
+        "client__device_id",
+        "provider_code",
+        "country_code",
+        "region",
+        "city",
+        "error",
+    )
+    readonly_fields = (
+        "client",
+        "provider_code",
+        "country_code",
+        "region",
+        "city",
+        "submitted_count",
+        "requested_count",
+        "candidate_count",
+        "ready_count",
+        "status",
+        "error",
+        "created_at",
+        "updated_at",
+    )
+    list_select_related = ("client", "client__config_bundle")
+    date_hierarchy = "created_at"
+    list_per_page = 100
+    preserve_filters = True
+
+    @admin.display(description="Office", ordering="client__office_name")
+    def office(self, obj):
+        return obj.client.office_name or "Personal"
+
+    @admin.display(description="System", ordering="client__system_number")
+    def system_number(self, obj):
+        return obj.client.system_number or "—"
+
+    @admin.display(description="Device", ordering="client__name")
+    def device_name(self, obj):
+        return obj.client.name
+
+    @admin.display(description="Error")
+    def error_preview(self, obj):
+        value = " ".join(str(obj.error or "").split())
+        return value if len(value) <= 100 else f"{value[:97]}..."
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
 @admin.register(ProxyReservation)
 class ProxyReservationAdmin(admin.ModelAdmin):
     list_display = ("id", "client", "job", "provider_code", "country_code", "region", "city", _profile_label, "profile_id", "reserved_at")
@@ -745,6 +826,83 @@ ProfileActivityAdmin.list_filter = ("status", "group_id", "client__office_name",
 ProfileActivityAdmin.search_fields = ("client__ipv4", "client__device_id", "client__office_name", "profile_name", "profile_id", "start_urls_json", "detail")
 
 
+@admin.register(OfficeProfileAudit)
+class OfficeProfileAuditAdmin(admin.ModelAdmin):
+    """Manage the lifecycle rows shown on the Office profile audit panel."""
+
+    list_display = (
+        "created_at",
+        "office",
+        "system_number",
+        "device_name",
+        "status",
+        _profile_label,
+        "profile_id",
+        "group_id",
+        "job_id",
+        "detail_preview",
+    )
+    list_filter = (
+        ("created_at", admin.DateFieldListFilter),
+        "client__office_name",
+        "status",
+        "group_id",
+        "client__config_bundle",
+    )
+    search_fields = (
+        "client__office_name",
+        "client__name",
+        "client__system_number",
+        "client__ipv4",
+        "client__device_id",
+        "profile_name",
+        "profile_id",
+        "group_id",
+        "status",
+        "start_urls_json",
+        "detail",
+    )
+    readonly_fields = (
+        "created_at",
+        "client",
+        "job",
+        "reservation",
+        "group_id",
+        "profile_name",
+        "profile_id",
+        "status",
+        "start_urls_json",
+        "detail",
+    )
+    list_select_related = ("client", "client__config_bundle", "job", "reservation")
+    date_hierarchy = "created_at"
+    list_per_page = 100
+    preserve_filters = True
+
+    @admin.display(description="Office", ordering="client__office_name")
+    def office(self, obj):
+        return obj.client.office_name or "Personal"
+
+    @admin.display(description="System", ordering="client__system_number")
+    def system_number(self, obj):
+        return obj.client.system_number or "—"
+
+    @admin.display(description="Device", ordering="client__name")
+    def device_name(self, obj):
+        return obj.client.name
+
+    @admin.display(description="Detail")
+    def detail_preview(self, obj):
+        value = " ".join(str(obj.detail or "").split())
+        return value if len(value) <= 100 else f"{value[:97]}..."
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
 @admin.register(ProfileDomainActivity)
 class ProfileDomainActivityAdmin(admin.ModelAdmin):
     list_display = (
@@ -793,6 +951,81 @@ class ProfileDomainActivityAdmin(admin.ModelAdmin):
         "session_ended_at",
     )
     list_select_related = ("client", "job", "reservation")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(OfficeAuditDomain)
+class OfficeAuditDomainAdmin(admin.ModelAdmin):
+    """Manage domain rows displayed by Office profile audit."""
+
+    list_display = (
+        "last_visited_at",
+        "office",
+        "system_number",
+        "device_name",
+        "domain",
+        _profile_label,
+        "profile_id",
+        "group_id",
+        "visit_count",
+    )
+    list_filter = (
+        ("last_visited_at", admin.DateFieldListFilter),
+        "client__office_name",
+        "group_id",
+        "client__config_bundle",
+    )
+    search_fields = (
+        "client__office_name",
+        "client__name",
+        "client__system_number",
+        "client__ipv4",
+        "client__device_id",
+        "domain",
+        "profile_name",
+        "profile_id",
+        "browser_id",
+        "session_id",
+    )
+    readonly_fields = (
+        "created_at",
+        "updated_at",
+        "client",
+        "job",
+        "reservation",
+        "session_id",
+        "group_id",
+        "profile_name",
+        "profile_id",
+        "browser_id",
+        "domain",
+        "first_visited_at",
+        "last_visited_at",
+        "visit_count",
+        "session_started_at",
+        "session_ended_at",
+    )
+    list_select_related = ("client", "client__config_bundle", "job", "reservation")
+    date_hierarchy = "last_visited_at"
+    list_per_page = 100
+    preserve_filters = True
+
+    @admin.display(description="Office", ordering="client__office_name")
+    def office(self, obj):
+        return obj.client.office_name or "Personal"
+
+    @admin.display(description="System", ordering="client__system_number")
+    def system_number(self, obj):
+        return obj.client.system_number or "—"
+
+    @admin.display(description="Device", ordering="client__name")
+    def device_name(self, obj):
+        return obj.client.name
 
     def has_add_permission(self, request):
         return False
