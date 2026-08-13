@@ -747,7 +747,6 @@ class OfficeAuditRequestAdmin(admin.ModelAdmin):
         "updated_at",
     )
     list_select_related = ("client", "client__config_bundle")
-    date_hierarchy = "created_at"
     list_per_page = 100
     preserve_filters = True
 
@@ -875,7 +874,6 @@ class OfficeProfileAuditAdmin(admin.ModelAdmin):
         "detail",
     )
     list_select_related = ("client", "client__config_bundle", "job", "reservation")
-    date_hierarchy = "created_at"
     list_per_page = 100
     preserve_filters = True
 
@@ -1011,7 +1009,6 @@ class OfficeAuditDomainAdmin(admin.ModelAdmin):
         "session_ended_at",
     )
     list_select_related = ("client", "client__config_bundle", "job", "reservation")
-    date_hierarchy = "last_visited_at"
     list_per_page = 100
     preserve_filters = True
 
