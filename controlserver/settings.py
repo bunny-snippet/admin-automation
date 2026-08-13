@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 import dj_database_url
 from celery.schedules import crontab
@@ -192,6 +193,42 @@ CELERY_TASK_DEFAULT_QUEUE = "proxy-jobs"
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_ALWAYS_EAGER = env_bool("CELERY_TASK_ALWAYS_EAGER", False)
 CELERY_TASK_IGNORE_RESULT = True
+
+# Share cache state across Gunicorn workers. REDIS_CACHE_URL may point to a
+# dedicated Redis service/database; otherwise DB 1 is derived from REDIS_URL
+# so Celery queue data and Django cache keys remain isolated.
+REDIS_CACHE_URL = os.getenv("REDIS_CACHE_URL", "").strip()
+if not REDIS_CACHE_URL and CELERY_BROKER_URL:
+    parsed_redis = urlsplit(CELERY_BROKER_URL)
+    REDIS_CACHE_URL = urlunsplit(
+        (
+            parsed_redis.scheme,
+            parsed_redis.netloc,
+            "/1",
+            parsed_redis.query,
+            parsed_redis.fragment,
+        )
+    )
+if REDIS_CACHE_URL:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": REDIS_CACHE_URL,
+            "KEY_PREFIX": "automation-control",
+            "TIMEOUT": 300,
+            "OPTIONS": {
+                "socket_connect_timeout": 3,
+                "socket_timeout": 3,
+            },
+        }
+    }
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "automation-control-local",
+        }
+    }
 CELERY_BEAT_SCHEDULE = {
     "maintain-proxy-pools": {
         "task": "control.tasks.maintain_proxy_pools",

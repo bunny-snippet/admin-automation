@@ -14,7 +14,7 @@ from django.utils import timezone
 
 from .admin import import_catalog_zip
 from .models import (
-    BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, ProfileDomainActivity,
+    BootstrapAudit, ClientAccess, ClientAccessIP, ConfigBundle, ExtensionPackage, ProfileDomainActivity,
     MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyPoolTarget,
     ProxyReservation, ProfileCreateLease, ProfileCreateQueue,
 )
@@ -864,6 +864,103 @@ class StaffPanelTests(TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertIn("rows", response.json())
                 self.assertIn("columns", response.json())
+
+    def test_access_audit_uses_cached_cursor_pages_without_exact_count(self):
+        for index in range(12):
+            BootstrapAudit.objects.create(
+                client=self.client_access,
+                observed_ip="203.0.113.40",
+                reported_ip="203.0.113.40",
+                device_id=f"audit-device-{index:02d}",
+                allowed=index % 2 == 0,
+                reason="allowed" if index % 2 == 0 else "not-whitelisted",
+                app_version="1.7.29",
+            )
+        self.login()
+        url = reverse("control:panel-resource-api", args=("access-audit",))
+        first = self.client.get(url, {"page_size": 10})
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(first["X-Panel-Cache"], "MISS")
+        payload = first.json()
+        self.assertEqual(len(payload["rows"]), 10)
+        self.assertIsNone(payload["pagination"]["total"])
+        self.assertTrue(payload["pagination"]["has_next"])
+
+        cached = self.client.get(url, {"page_size": 10})
+        self.assertEqual(cached["X-Panel-Cache"], "HIT")
+        second = self.client.get(
+            url,
+            {
+                "page_size": 10,
+                "cursor": payload["pagination"]["next_cursor"],
+            },
+        )
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(len(second.json()["rows"]), 2)
+
+    def test_access_audit_can_grant_an_existing_device_additional_ip(self):
+        audit = BootstrapAudit.objects.create(
+            observed_ip="198.51.100.90",
+            reported_ip="198.51.100.90",
+            device_id=self.client_access.device_id,
+            allowed=False,
+            reason="not-whitelisted",
+            app_version="1.7.29",
+        )
+        self.login()
+        response = self.client.post(
+            reverse("control:panel-resource-api", args=("access-audit",)),
+            data=json.dumps(
+                {
+                    "action": "grant_access",
+                    "audit_id": audit.pk,
+                    "ipv4": "198.51.100.90",
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        self.assertTrue(
+            ClientAccessIP.objects.filter(
+                client=self.client_access,
+                ipv4="198.51.100.90",
+                active=True,
+            ).exists()
+        )
+        audit.refresh_from_db()
+        self.assertEqual(audit.client, self.client_access)
+
+    def test_access_audit_can_create_a_new_client(self):
+        audit = BootstrapAudit.objects.create(
+            observed_ip="198.51.100.91",
+            reported_ip="198.51.100.91",
+            device_id="new-audit-device",
+            allowed=False,
+            reason="not-whitelisted",
+            app_version="1.7.29",
+        )
+        self.login()
+        response = self.client.post(
+            reverse("control:panel-resource-api", args=("access-audit",)),
+            data=json.dumps(
+                {
+                    "action": "grant_access",
+                    "audit_id": audit.pk,
+                    "ipv4": "198.51.100.91",
+                    "name": "New audit device",
+                    "office": "North",
+                    "system_number": "2",
+                    "profile_name": "North Two",
+                    "config_bundle_id": self.bundle.pk,
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        created = ClientAccess.objects.get(device_id="new-audit-device")
+        self.assertEqual(created.ipv4, "198.51.100.91")
+        self.assertEqual(created.config_bundle, self.bundle)
 
     def test_domain_activity_filters_detail_and_csv_are_precise(self):
         self.login()

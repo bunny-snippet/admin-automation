@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import ipaddress
 import json
 from typing import Any, Callable
 
@@ -9,13 +11,14 @@ from django.core.cache import cache
 from django.db.models import Count, Q
 from django.http import HttpRequest, JsonResponse
 from django.urls import reverse
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.views.decorators.http import require_http_methods
 
 from .models import (
     BootstrapAudit,
     BrowserGroupMapping,
     ClientAccess,
+    ClientAccessIP,
     ConfigBundle,
     ExtensionPackage,
     ProfileActivity,
@@ -26,7 +29,18 @@ from .models import (
     ProxyPoolTarget,
     ProxyReservation,
 )
-from .panel_views import admin_change, bounded_int, iso, panel_json, profile_display_name
+from .cache_utils import (
+    access_audit_cache_ttl,
+    access_audit_cache_version,
+)
+from .panel_views import (
+    _panel_datetime_bound,
+    admin_change,
+    bounded_int,
+    iso,
+    panel_json,
+    profile_display_name,
+)
 from .tasks import queue_refill_proxy_pool
 
 
@@ -43,12 +57,20 @@ def _resource_page(
     description: str,
     columns: list[dict[str, str]],
     admin_url: str,
+    extra: dict[str, Any] | None = None,
+    cache_key: str = "",
+    cache_timeout: int | None = None,
 ) -> JsonResponse:
+    if cache_key:
+        cached = cache.get(cache_key)
+        if isinstance(cached, dict):
+            response = panel_json(cached)
+            response["X-Panel-Cache"] = "HIT"
+            return response
     page_size = bounded_int(request.GET.get("page_size"), 25, 10, 100)
     paginator = Paginator(queryset, page_size)
     page = paginator.get_page(bounded_int(request.GET.get("page"), 1, 1, 1000000))
-    return panel_json(
-        {
+    payload = {
             "title": title,
             "description": description,
             "columns": columns + [_column("admin_url", "", "action")],
@@ -63,12 +85,151 @@ def _resource_page(
                 "has_next": page.has_next(),
             },
         }
+    if extra:
+        payload.update(extra)
+    if cache_key:
+        cache.set(cache_key, payload, timeout=cache_timeout)
+    response = panel_json(payload)
+    if cache_key:
+        response["X-Panel-Cache"] = "MISS"
+    return response
+
+
+def _grant_access_from_audit(body: dict[str, Any]) -> JsonResponse:
+    try:
+        audit = BootstrapAudit.objects.select_related("client").get(
+            pk=int(body.get("audit_id"))
+        )
+    except (BootstrapAudit.DoesNotExist, TypeError, ValueError):
+        return panel_json(
+            {"ok": False, "message": "Audit record not found."}, status=404
+        )
+
+    evidence_ips = {
+        str(value)
+        for value in (audit.reported_ip, audit.observed_ip)
+        if value
+    }
+    try:
+        selected_ip = str(
+            ipaddress.IPv4Address(str(body.get("ipv4") or "").strip())
+        )
+    except ipaddress.AddressValueError:
+        return panel_json(
+            {"ok": False, "message": "Choose a valid audit IPv4 address."},
+            status=400,
+        )
+    if selected_ip not in evidence_ips:
+        return panel_json(
+            {"ok": False, "message": "The IPv4 must come from this audit record."},
+            status=400,
+        )
+
+    client = audit.client
+    if client is None and audit.device_id:
+        client = (
+            ClientAccess.objects.filter(device_id=audit.device_id)
+            .order_by("-active", "pk")
+            .first()
+        )
+
+    created = False
+    if client is None:
+        device_id = str(audit.device_id or "").strip()
+        name = str(body.get("name") or "").strip()[:120]
+        office = str(body.get("office") or "").strip()[:64]
+        system = str(body.get("system_number") or "").strip()[:32]
+        profile_name = str(body.get("profile_name") or name).strip()[:160]
+        try:
+            config = ConfigBundle.objects.get(
+                pk=int(body.get("config_bundle_id")), active=True
+            )
+        except (ConfigBundle.DoesNotExist, TypeError, ValueError):
+            return panel_json(
+                {"ok": False, "message": "Choose an active configuration bundle."},
+                status=400,
+            )
+        if not device_id or not name or not office or not system:
+            return panel_json(
+                {
+                    "ok": False,
+                    "message": (
+                        "Device name, office and system number are required."
+                    ),
+                },
+                status=400,
+            )
+        try:
+            with transaction.atomic():
+                client = ClientAccess.objects.create(
+                    name=name,
+                    ipv4=selected_ip,
+                    device_id=device_id,
+                    active=True,
+                    office_name=office,
+                    system_number=system,
+                    profile_name=profile_name,
+                    config_bundle=config,
+                    notes=f"Created from bootstrap audit #{audit.pk}",
+                )
+                created = True
+        except IntegrityError:
+            return panel_json(
+                {
+                    "ok": False,
+                    "message": (
+                        "This device/IP access entry already exists; refresh "
+                        "the page and update the existing device."
+                    ),
+                },
+                status=409,
+            )
+    else:
+        client.active = True
+        client.save(update_fields=("active", "updated_at"))
+        if str(client.ipv4) != selected_ip:
+            allowed_ip, _ = ClientAccessIP.objects.get_or_create(
+                client=client,
+                ipv4=selected_ip,
+                defaults={"active": True},
+            )
+            if not allowed_ip.active:
+                allowed_ip.active = True
+                allowed_ip.save(update_fields=("active",))
+
+    if audit.client_id != client.pk:
+        audit.client = client
+        audit.save(update_fields=("client",))
+    verb = "created" if created else "updated"
+    return panel_json(
+        {
+            "ok": True,
+            "message": f"{client.name} access {verb}; {selected_ip} is allowed.",
+            "client_id": client.pk,
+        }
     )
 
 
 @staff_member_required(login_url="admin:login")
 @require_http_methods(["GET", "POST"])
 def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
+    if resource == "access-audit" and request.method == "POST":
+        try:
+            body = json.loads(request.body or "{}")
+        except (TypeError, ValueError):
+            return panel_json(
+                {"ok": False, "message": "Invalid JSON body."}, status=400
+            )
+        if (
+            not isinstance(body, dict)
+            or str(body.get("action") or "") != "grant_access"
+        ):
+            return panel_json(
+                {"ok": False, "message": "Unknown access-audit action."},
+                status=400,
+            )
+        return _grant_access_from_audit(body)
+
     if resource == "proxy-pools" and request.method == "POST":
         try:
             body = json.loads(request.body or "{}")
@@ -625,36 +786,114 @@ def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
     if resource == "access-audit":
         queryset = BootstrapAudit.objects.select_related("client")
         if query:
-            queryset = queryset.filter(
-                Q(observed_ip__icontains=query)
-                | Q(reported_ip__icontains=query)
-                | Q(device_id__icontains=query)
-                | Q(client__name__icontains=query)
-                | Q(reason__icontains=query)
-            )
-        return _resource_page(
-            request,
-            queryset.order_by("-created_at"),
-            lambda row: {
+            try:
+                exact_ip = str(ipaddress.IPv4Address(query))
+            except ipaddress.AddressValueError:
+                exact_ip = ""
+            if exact_ip:
+                queryset = queryset.filter(
+                    Q(observed_ip=exact_ip) | Q(reported_ip=exact_ip)
+                )
+            elif len(query) >= 32 and " " not in query:
+                queryset = queryset.filter(device_id=query)
+            else:
+                queryset = queryset.filter(
+                    Q(device_id__icontains=query)
+                    | Q(client__name__icontains=query)
+                    | Q(reason__icontains=query)
+                )
+        allowed = str(request.GET.get("allowed") or "").strip().lower()
+        if allowed in {"1", "0"}:
+            queryset = queryset.filter(allowed=allowed == "1")
+        start = _panel_datetime_bound(request.GET.get("from"))
+        end = _panel_datetime_bound(request.GET.get("to"))
+        if start:
+            queryset = queryset.filter(created_at__gte=start)
+        if end:
+            queryset = queryset.filter(created_at__lte=end)
+        try:
+            cursor = max(0, int(request.GET.get("cursor") or 0))
+        except (TypeError, ValueError):
+            cursor = 0
+        if cursor:
+            queryset = queryset.filter(pk__lt=cursor)
+
+        page_size = bounded_int(request.GET.get("page_size"), 25, 10, 100)
+        version = access_audit_cache_version()
+        signature = hashlib.sha256(
+            request.GET.urlencode().encode("utf-8")
+        ).hexdigest()[:24]
+        audit_cache_key = f"panel:access-audit:v{version}:{signature}"
+        cached = cache.get(audit_cache_key)
+        if isinstance(cached, dict):
+            response = panel_json(cached)
+            response["X-Panel-Cache"] = "HIT"
+            return response
+
+        records = list(queryset.order_by("-pk")[: page_size + 1])
+        has_next = len(records) > page_size
+        records = records[:page_size]
+        rows = [
+            {
+                "id": row.pk,
                 "created_at": iso(row.created_at),
                 "client": row.client.name if row.client else "Unknown",
+                "client_id": row.client_id or "",
                 "observed_ip": str(row.observed_ip or ""),
                 "reported_ip": str(row.reported_ip or ""),
                 "device_id": row.device_id,
                 "allowed": row.allowed,
                 "reason": row.reason,
                 "version": row.app_version,
+                "can_grant": bool(
+                    row.device_id and (row.observed_ip or row.reported_ip)
+                ),
                 "admin_url": admin_change("bootstrapaudit", row.pk),
-            },
-            title="Access audit",
-            description="Bootstrap authorization decisions with IP and device evidence.",
-            columns=[
-                d("created_at", "Time"), t("client", "Client"),
-                t("observed_ip", "Observed IP"), t("reported_ip", "Reported IP"),
-                t("device_id", "Device ID"), s("allowed", "Allowed"),
-                t("reason", "Reason"), t("version", "App version"),
-            ],
-            admin_url=reverse("admin:control_bootstrapaudit_changelist"),
+            }
+            for row in records
+        ]
+        configurations = list(
+            ConfigBundle.objects.filter(active=True)
+            .order_by("name")
+            .values("id", "name", "browser_group_name", "browser_group_id")
         )
+        payload = {
+            "title": "Access audit",
+            "description": "Bootstrap authorization decisions with IP and device evidence.",
+            "rows": rows,
+            "columns": [
+                d("created_at", "Time"),
+                t("client", "Client"),
+                t("observed_ip", "Observed IP"),
+                t("reported_ip", "Reported IP"),
+                t("device_id", "Device ID"),
+                s("allowed", "Allowed"),
+                t("reason", "Reason"),
+                t("version", "App version"),
+            ],
+            "configurations": configurations,
+            "admin_url": reverse("admin:control_bootstrapaudit_changelist"),
+            "filters": {
+                "q": query,
+                "allowed": allowed,
+                "from": str(request.GET.get("from") or ""),
+                "to": str(request.GET.get("to") or ""),
+            },
+            "pagination": {
+                "page_size": page_size,
+                "has_previous": bool(cursor),
+                "has_next": has_next,
+                "next_cursor": records[-1].pk if has_next and records else "",
+                "total": None,
+            },
+        }
+        cache.set(
+            audit_cache_key,
+            payload,
+            timeout=access_audit_cache_ttl(audit_cache_key),
+        )
+        response = panel_json(payload)
+        response["X-Panel-Cache"] = "MISS"
+        return response
 
     return panel_json({"message": "Unknown panel resource."}, status=404)

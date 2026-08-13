@@ -452,7 +452,7 @@ class ProfileDomainActivity(models.Model):
 
 
 class BootstrapAudit(models.Model):
-    created_at = models.DateTimeField(auto_now_add=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     client = models.ForeignKey(
         ClientAccess,
         on_delete=models.SET_NULL,
@@ -460,15 +460,21 @@ class BootstrapAudit(models.Model):
         null=True,
         related_name="audit_events",
     )
-    observed_ip = models.GenericIPAddressField(blank=True, null=True)
-    reported_ip = models.GenericIPAddressField(blank=True, null=True)
-    device_id = models.CharField(max_length=128, blank=True)
+    observed_ip = models.GenericIPAddressField(blank=True, null=True, db_index=True)
+    reported_ip = models.GenericIPAddressField(blank=True, null=True, db_index=True)
+    device_id = models.CharField(max_length=128, blank=True, db_index=True)
     allowed = models.BooleanField(default=False)
     reason = models.CharField(max_length=80)
     app_version = models.CharField(max_length=40, blank=True)
 
     class Meta:
         ordering = ("-created_at",)
+        indexes = [
+            models.Index(
+                fields=("allowed", "-id"),
+                name="audit_allowed_id_idx",
+            ),
+        ]
 
     def __str__(self) -> str:
         return f"{self.created_at:%Y-%m-%d %H:%M} / {self.observed_ip} / {self.reason}"

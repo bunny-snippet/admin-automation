@@ -42,6 +42,9 @@
     route: "overview",
     resourcePage: 1,
     resourceQuery: "",
+    auditCursor: "",
+    auditCursorStack: [],
+    auditFilters: { page_size: "25" },
     proxyFilters: { bundle: "", provider: "", country: "", status: "" },
     domainPage: 1,
     devicePage: 1,
@@ -532,9 +535,67 @@
     bindPagination("resource");
   }
 
+  function auditParams() {
+    const params = new URLSearchParams();
+    Object.entries(state.auditFilters).forEach(([key, value]) => {
+      if (value) params.set(key, value);
+    });
+    if (state.auditCursor) params.set("cursor", state.auditCursor);
+    return params;
+  }
+
+  function openAuditGrant(row, data) {
+    const node = document.getElementById("device-dialog");
+    const ips = [...new Set([row.reported_ip, row.observed_ip].filter(Boolean))];
+    const existing = Boolean(row.client_id);
+    node.innerHTML = `<div class="dialog-header"><div><span class="eyebrow">Bootstrap authorization</span><h2>Grant device access</h2><p class="mono">${e(row.device_id)}</p></div><button type="button" class="dialog-close" data-management-close>Close</button></div><form class="management-form" id="audit-grant-form"><label>Authorized IPv4<select name="ipv4" required>${ips.map((ip) => `<option value="${e(ip)}">${e(ip)}</option>`).join("")}</select></label>${existing ? `<div class="detail-field"><span>Existing client</span><strong>${e(row.client)}</strong><small>The selected IP will be enabled as an additional address when it differs from the primary IP.</small></div>` : `<label>Device name<input name="name" value="Device ${e(String(row.device_id).slice(0, 12))}" required></label><label>Office<input name="office" required></label><label>System number<input name="system_number" required></label><label>Profile name<input name="profile_name" placeholder="Defaults to device name"></label><label>Configuration bundle<select name="config_bundle_id" required><option value="">Choose bundle</option>${data.configurations.map((item) => `<option value="${item.id}">${e(item.name)} · ${e(item.browser_group_name)} · ${e(item.browser_group_id || "-")}</option>`).join("")}</select></label>`}<div class="dialog-actions"><button type="button" class="button button-secondary" data-management-close>Cancel</button><button type="submit" class="button button-primary">Grant access</button></div></form>`;
+    node.showModal ? node.showModal() : node.setAttribute("open", "");
+    node.querySelectorAll("[data-management-close]").forEach((button) => button.addEventListener("click", () => closeManagementDialog(node)));
+    node.querySelector("#audit-grant-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const values = new FormData(form);
+      try {
+        await writeApi(endpoints.resource.replace("__resource__", "access-audit"), {
+          action: "grant_access", audit_id: row.id,
+          ipv4: values.get("ipv4"), name: values.get("name"),
+          office: values.get("office"), system_number: values.get("system_number"),
+          profile_name: values.get("profile_name"),
+          config_bundle_id: values.get("config_bundle_id"),
+        });
+        closeManagementDialog(node);
+        await loadAccessAudit();
+      } catch (error) {
+        form.querySelector(".form-error")?.remove();
+        form.insertAdjacentHTML("afterbegin", `<div class="form-error">${e(error.message)}</div>`);
+      }
+    });
+  }
+
+  async function loadAccessAudit() {
+    const url = endpoints.resource.replace("__resource__", "access-audit");
+    const data = await api(`${url}?${auditParams()}`);
+    const filters = state.auditFilters;
+    const rows = data.rows.map((row) => `<tr><td>${formatDate(row.created_at)}</td><td><span class="cell-primary">${e(row.client)}</span><div class="cell-muted mono">${e(row.device_id || "No device ID")}</div></td><td><span class="mono">${e(row.observed_ip || "-")}</span><div class="cell-muted mono">reported ${e(row.reported_ip || "-")}</div></td><td>${statusPill(row.allowed)}</td><td><span class="cell-primary">${e(row.reason)}</span><div class="cell-muted">v${e(row.version || "-")}</div></td><td class="proxy-actions">${row.can_grant ? `<button class="link-button" data-audit-grant="${row.id}">${row.client_id ? "Update access" : "Grant access"}</button>` : ""}<a class="link-button" href="${e(row.admin_url)}">Admin</a></td></tr>`).join("");
+    content.innerHTML = `<div class="page-intro"><div><span class="eyebrow">Authorization evidence</span><h2>Bootstrap access audit</h2><p>Fast cursor-based audit history. Grant or update device access directly from a recorded bootstrap hit.</p></div><a class="button button-secondary" href="${e(data.admin_url)}">Django Admin</a></div><form class="toolbar" id="audit-filters"><div class="field field-wide"><label>Exact IP/device or text</label><input name="q" value="${e(filters.q || "")}" placeholder="IPv4, full device ID, client or reason"></div><div class="field"><label>Decision</label><select name="allowed"><option value="">All</option><option value="1" ${filters.allowed === "1" ? "selected" : ""}>Allowed</option><option value="0" ${filters.allowed === "0" ? "selected" : ""}>Denied</option></select></div>${dateFilterOptions(filters)}<button class="button button-primary" type="submit">Apply filters</button><button class="button button-secondary" type="button" id="clear-audit-filters">Clear</button></form><article class="panel-card"><div class="panel-header"><div><h3>Access decisions</h3><p>Newest matching records · no million-row count query</p></div></div><div class="panel-body-flush"><div class="table-wrap"><table class="data-table management-table"><thead><tr><th>Time</th><th>Client / device</th><th>Observed / reported IP</th><th>Allowed</th><th>Reason / version</th><th>Action</th></tr></thead><tbody>${rows || '<tr><td colspan="6" class="empty-state">No audit records match these filters.</td></tr>'}</tbody></table></div></div><div class="pagination"><button class="button button-secondary" id="audit-previous" ${data.pagination.has_previous ? "" : "disabled"}>Previous</button><span>Cursor page ${state.auditCursorStack.length + 1}</span><button class="button button-secondary" id="audit-next" ${data.pagination.has_next ? "" : "disabled"}>Next</button></div></article>`;
+    document.querySelectorAll("[data-audit-grant]").forEach((button) => button.addEventListener("click", () => openAuditGrant(data.rows.find((row) => String(row.id) === button.dataset.auditGrant), data)));
+    document.getElementById("audit-filters").addEventListener("submit", (event) => {
+      event.preventDefault(); const values = new FormData(event.currentTarget);
+      ["q", "allowed", "from", "to"].forEach((key) => { const value = String(values.get(key) || "").trim(); if (value) state.auditFilters[key] = value; else delete state.auditFilters[key]; });
+      state.auditCursor = ""; state.auditCursorStack = []; loadAccessAudit();
+    });
+    document.getElementById("clear-audit-filters").addEventListener("click", () => { state.auditFilters = { page_size: "25" }; state.auditCursor = ""; state.auditCursorStack = []; loadAccessAudit(); });
+    document.getElementById("audit-next").addEventListener("click", () => { if (!data.pagination.next_cursor) return; state.auditCursorStack.push(state.auditCursor); state.auditCursor = String(data.pagination.next_cursor); loadAccessAudit(); window.scrollTo({ top: 0, behavior: "smooth" }); });
+    document.getElementById("audit-previous").addEventListener("click", () => { if (!state.auditCursorStack.length) return; state.auditCursor = state.auditCursorStack.pop() || ""; loadAccessAudit(); window.scrollTo({ top: 0, behavior: "smooth" }); });
+  }
+
   async function loadResource() {
     if (state.route === "proxy-pools") {
       await loadProxyPools();
+      return;
+    }
+    if (state.route === "access-audit") {
+      await loadAccessAudit();
       return;
     }
     const url = endpoints.resource.replace("__resource__", encodeURIComponent(state.route));
