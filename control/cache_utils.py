@@ -10,24 +10,39 @@ ACCESS_AUDIT_MIN_TTL = (11 * 60 + 5) * 60
 ACCESS_AUDIT_MAX_TTL = (12 * 60 + 10) * 60
 
 
+def safe_cache_get(key: str, default=None):
+    """Read an optional panel cache without making Redis a hard dependency."""
+    try:
+        return cache.get(key, default)
+    except Exception:
+        return default
+
+
+def safe_cache_set(key: str, value, timeout=None) -> bool:
+    """Best-effort cache write; database-backed panel data remains canonical."""
+    try:
+        cache.set(key, value, timeout=timeout)
+        return True
+    except Exception:
+        return False
+
+
 def access_audit_cache_version() -> int:
     """Return the shared audit snapshot version used by all web workers."""
-    cache.add(ACCESS_AUDIT_VERSION_KEY, 1, timeout=None)
     try:
+        cache.add(ACCESS_AUDIT_VERSION_KEY, 1, timeout=None)
         return int(cache.get(ACCESS_AUDIT_VERSION_KEY) or 1)
-    except (TypeError, ValueError):
-        cache.set(ACCESS_AUDIT_VERSION_KEY, 1, timeout=None)
+    except Exception:
         return 1
 
 
 def bump_access_audit_cache_version() -> int:
     """Invalidate audit page caches without scanning/deleting Redis keys."""
-    if cache.add(ACCESS_AUDIT_VERSION_KEY, 2, timeout=None):
-        return 2
     try:
+        if cache.add(ACCESS_AUDIT_VERSION_KEY, 2, timeout=None):
+            return 2
         return int(cache.incr(ACCESS_AUDIT_VERSION_KEY))
-    except (ValueError, TypeError):
-        cache.set(ACCESS_AUDIT_VERSION_KEY, 2, timeout=None)
+    except Exception:
         return 2
 
 

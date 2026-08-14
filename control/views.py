@@ -88,11 +88,15 @@ def observed_client_ip(request: HttpRequest) -> str:
 def _rate_limited(ip_value: str) -> bool:
     limit = max(1, settings.BOOTSTRAP_RATE_LIMIT_PER_MINUTE)
     key = f"bootstrap-rate:{ip_value}:{int(timezone.now().timestamp()) // 60}"
-    if cache.add(key, 1, timeout=75):
-        return False
     try:
+        if cache.add(key, 1, timeout=75):
+            return False
         return cache.incr(key) > limit
-    except ValueError:
+    except Exception:
+        # Redis is an optimization for rate limiting, not a prerequisite for
+        # application authorization.  A cache outage (including Redis MISCONF
+        # after a failed RDB snapshot) must never turn bootstrap into HTTP 500.
+        logger.warning("Bootstrap rate-limit cache unavailable; allowing request")
         return False
 
 

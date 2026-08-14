@@ -154,6 +154,12 @@ class ControlApiTests(TestCase):
         response = self.bootstrap(device_id="not-authorized")
         self.assertEqual(response.status_code, 403)
 
+    @mock.patch("control.views.cache.add", side_effect=RuntimeError("redis unavailable"))
+    def test_bootstrap_remains_available_when_rate_limit_cache_fails(self, _cache_add):
+        response = self.bootstrap()
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["allowed"])
+
     def test_allowed_bootstrap_merges_per_client_values(self):
         response = self.bootstrap()
         self.assertEqual(response.status_code, 200)

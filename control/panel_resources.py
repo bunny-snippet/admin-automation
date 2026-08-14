@@ -7,7 +7,6 @@ from typing import Any, Callable
 
 from django.contrib.admin.views.decorators import staff_member_required
 from django.core.paginator import Paginator
-from django.core.cache import cache
 from django.db.models import Count, Q
 from django.http import HttpRequest, JsonResponse
 from django.urls import reverse
@@ -32,6 +31,8 @@ from .models import (
 from .cache_utils import (
     access_audit_cache_ttl,
     access_audit_cache_version,
+    safe_cache_get,
+    safe_cache_set,
 )
 from .panel_views import (
     _panel_datetime_bound,
@@ -62,7 +63,7 @@ def _resource_page(
     cache_timeout: int | None = None,
 ) -> JsonResponse:
     if cache_key:
-        cached = cache.get(cache_key)
+        cached = safe_cache_get(cache_key)
         if isinstance(cached, dict):
             response = panel_json(cached)
             response["X-Panel-Cache"] = "HIT"
@@ -88,7 +89,7 @@ def _resource_page(
     if extra:
         payload.update(extra)
     if cache_key:
-        cache.set(cache_key, payload, timeout=cache_timeout)
+        safe_cache_set(cache_key, payload, timeout=cache_timeout)
     response = panel_json(payload)
     if cache_key:
         response["X-Panel-Cache"] = "MISS"
@@ -522,7 +523,7 @@ def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
         # repeatedly during operations.  Cache them briefly so every refresh
         # does not run three DISTINCT scans over the large target table.
         option_cache_key = "panel:proxy-pool-options:v1"
-        options = cache.get(option_cache_key)
+        options = safe_cache_get(option_cache_key)
         if options is None:
             options = {
                 "bundles": list(
@@ -544,7 +545,7 @@ def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
                     .order_by("country_code")
                 ),
             }
-            cache.set(option_cache_key, options, 60)
+            safe_cache_set(option_cache_key, options, 60)
         bundle_options = options["bundles"]
         provider_options = options["providers"]
         country_options = options["countries"]
@@ -824,7 +825,7 @@ def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
             request.GET.urlencode().encode("utf-8")
         ).hexdigest()[:24]
         audit_cache_key = f"panel:access-audit:v{version}:{signature}"
-        cached = cache.get(audit_cache_key)
+        cached = safe_cache_get(audit_cache_key)
         if isinstance(cached, dict):
             response = panel_json(cached)
             response["X-Panel-Cache"] = "HIT"
@@ -887,7 +888,7 @@ def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
                 "total": None,
             },
         }
-        cache.set(
+        safe_cache_set(
             audit_cache_key,
             payload,
             timeout=access_audit_cache_ttl(audit_cache_key),
