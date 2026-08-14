@@ -545,6 +545,28 @@ def acquire_profile_lease(request: HttpRequest) -> JsonResponse:
             signing.BadSignature, signing.SignatureExpired, ClientAccess.DoesNotExist):
         return _json_response({"allowed": False, "message": "Access denied."}, status=403)
 
+    if not settings.PROFILE_CREATE_SERIALIZATION_ENABLED:
+        # Each production device owns a distinct browser group. Keeping a FIFO
+        # lease in that topology only allows an abandoned row to block its own
+        # device. Expire legacy rows and authorize creation immediately.
+        key = _profile_lease_key(client, group_id)
+        now = timezone.now()
+        ProfileCreateLease.objects.filter(lease_key=key).delete()
+        ProfileCreateQueue.objects.filter(
+            scope_key=key,
+            status__in=("queued", "active"),
+        ).update(status="expired", lease_token="", expires_at=now)
+        return _json_response(
+            {
+                "allowed": True,
+                "queued": False,
+                "lease_id": f"direct-{secrets.token_urlsafe(32)}",
+                "group_id": group_id,
+                "lease_seconds": 0,
+                "serialized": False,
+            }
+        )
+
     # Five minutes covers proxy polling plus the YS add/list/open sequence;
     # a crashed process is released automatically after this deadline.
     lease_seconds = 300
@@ -668,6 +690,15 @@ def release_profile_lease(request: HttpRequest) -> JsonResponse:
     except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError,
             signing.BadSignature, signing.SignatureExpired, ClientAccess.DoesNotExist):
         return _json_response({"allowed": False, "message": "Access denied."}, status=403)
+    if not settings.PROFILE_CREATE_SERIALIZATION_ENABLED:
+        return _json_response(
+            {
+                "allowed": True,
+                "released": True,
+                "cancelled": bool(request_token and not lease_id),
+                "serialized": False,
+            }
+        )
     key = _profile_lease_key(client, group_id)
     if request_token and not lease_id:
         cancelled = ProfileCreateQueue.objects.filter(

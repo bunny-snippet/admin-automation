@@ -202,6 +202,11 @@ AUTO_GENERATE_PROXY_ON_DEMAND = env_bool(
 )
 AUTO_REFILL_PROXY_POOLS = env_bool("AUTO_REFILL_PROXY_POOLS", False)
 PROXY_REFILL_STALE_SECONDS = int(os.getenv("PROXY_REFILL_STALE_SECONDS", "900"))
+# Every deployed device has its own browser group, so the account/group FIFO
+# lease is optional. Direct mode avoids stale leases delaying profile starts.
+PROFILE_CREATE_SERIALIZATION_ENABLED = env_bool(
+    "PROFILE_CREATE_SERIALIZATION_ENABLED", False
+)
 
 PROXY_ALERT_ENABLED = env_bool(
     "PROXY_ALERT_ENABLED", env_bool("PROXY_ALERT_SMS_ENABLED", False)

@@ -31,6 +31,7 @@ from .tasks import (
     TRUST_APP_REPORTED_IPV4=False,
     BOOTSTRAP_RATE_LIMIT_PER_MINUTE=100,
     BOOTSTRAP_TOKEN_MAX_AGE=300,
+    PROFILE_CREATE_SERIALIZATION_ENABLED=True,
 )
 class ControlApiTests(TestCase):
     def setUp(self):
@@ -598,6 +599,41 @@ class ControlApiTests(TestCase):
             ProfileCreateQueue.objects.get(client=second).status,
             "expired",
         )
+
+    @override_settings(PROFILE_CREATE_SERIALIZATION_ENABLED=False)
+    def test_direct_profile_mode_never_waits_for_a_slot(self):
+        token = self.bootstrap().json()["access_token"]
+        stale = ProfileCreateLease.objects.create(
+            lease_key="profile-create:stale:2255",
+            owner_token="stale-owner",
+            client=self.client_access,
+            group_id="2255",
+            requested_count=1,
+            expires_at=timezone.now() + timedelta(minutes=5),
+        )
+        # Use the real key so direct mode also proves that legacy blockers are
+        # removed. The helper is intentionally local to the view implementation.
+        from .views import _profile_lease_key
+
+        stale.lease_key = _profile_lease_key(self.client_access, "2255")
+        stale.save(update_fields=("lease_key",))
+        response = self.client.post(
+            reverse("control:profile-lease-acquire"),
+            data=json.dumps({"group_id": "2255", "requested_count": 2}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+            HTTP_X_DEVICE_ID="device-one",
+            HTTP_X_CLIENT_IPV4="203.0.113.10",
+            REMOTE_ADDR="203.0.113.10",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["allowed"])
+        self.assertFalse(response.json()["queued"])
+        self.assertFalse(response.json()["serialized"])
+        self.assertTrue(response.json()["lease_id"].startswith("direct-"))
+        self.assertFalse(ProfileCreateLease.objects.exists())
+        self.assertFalse(ProfileCreateQueue.objects.exists())
 
     def test_proxy_job_returns_per_line_socks5_protocol(self):
         country = ProxyCountryFile(
