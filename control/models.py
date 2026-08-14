@@ -295,6 +295,58 @@ class ProxyGenerationJob(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
 
+class ProxyInventoryAlert(models.Model):
+    """Durable record of an app request that found insufficient inventory."""
+
+    client = models.ForeignKey(
+        ClientAccess,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="proxy_inventory_alerts",
+    )
+    dedupe_key = models.CharField(max_length=64, unique=True, editable=False)
+    config_bundle = models.ForeignKey(
+        ConfigBundle,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="proxy_inventory_alerts",
+    )
+    office_name = models.CharField(max_length=160, blank=True)
+    system_number = models.CharField(max_length=80, blank=True)
+    device_id = models.CharField(max_length=128, blank=True)
+    provider_code = models.CharField(max_length=32)
+    country_code = models.CharField(max_length=32)
+    region = models.CharField(max_length=120, blank=True)
+    city = models.CharField(max_length=120, blank=True)
+    available_count = models.PositiveSmallIntegerField(default=0)
+    requested_count = models.PositiveSmallIntegerField(default=1)
+    occurrence_count = models.PositiveIntegerField(default=1)
+    status = models.CharField(max_length=24, default="pending")
+    provider_message_id = models.CharField(max_length=80, blank=True)
+    error = models.TextField(blank=True)
+    first_seen_at = models.DateTimeField(auto_now_add=True)
+    last_seen_at = models.DateTimeField(auto_now=True)
+    sent_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        ordering = ("-last_seen_at", "-pk")
+        indexes = [
+            models.Index(
+                fields=(
+                    "config_bundle",
+                    "provider_code",
+                    "country_code",
+                    "region",
+                    "city",
+                ),
+                name="proxy_alert_scope_idx",
+            ),
+            models.Index(fields=("status", "last_seen_at"), name="proxy_alert_status_idx"),
+        ]
+
+
 class OfficeAuditRequest(ProxyGenerationJob):
     """Admin-facing request rows used by Office profile audit."""
 

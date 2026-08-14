@@ -10,6 +10,7 @@ from celery import shared_task
 from django.conf import settings
 from django.db import transaction
 from django.db.models import Count, Q
+from django.utils import timezone
 
 from .geo_catalog import (
     ensure_global_country_catalog,
@@ -20,6 +21,7 @@ from .models import (
     ConfigBundle,
     ProxyCountryFile,
     ProxyGenerationJob,
+    ProxyInventoryAlert,
     ProxyPoolEntry,
     ProxyPoolTarget,
     ProxyRegionCatalog,
@@ -329,6 +331,47 @@ def queue_refill_proxy_pool(target_id: int) -> bool:
     return True
 
 
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+def send_proxy_inventory_alert(self, alert_id: int) -> None:
+    """Deliver a durable proxy shortage record as a normal SMS."""
+    from .alerts import SMSConfigurationError, send_twilio_proxy_alert
+
+    try:
+        alert = ProxyInventoryAlert.objects.select_related("config_bundle").get(
+            pk=alert_id
+        )
+    except ProxyInventoryAlert.DoesNotExist:
+        return
+    if not settings.PROXY_ALERT_SMS_ENABLED:
+        ProxyInventoryAlert.objects.filter(pk=alert_id).update(
+            status="disabled",
+            error="SMS delivery is disabled in server configuration.",
+        )
+        return
+    try:
+        message_ids = send_twilio_proxy_alert(alert)
+    except SMSConfigurationError as exc:
+        ProxyInventoryAlert.objects.filter(pk=alert_id).update(
+            status="config_error",
+            error=str(exc)[:1000],
+        )
+        return
+    except Exception as exc:
+        ProxyInventoryAlert.objects.filter(pk=alert_id).update(
+            status="failed",
+            error=f"{type(exc).__name__}: {exc}"[:1000],
+        )
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=exc)
+        return
+    ProxyInventoryAlert.objects.filter(pk=alert_id).update(
+        status="sent",
+        provider_message_id=",".join(value for value in message_ids if value)[:80],
+        error="",
+        sent_at=timezone.now(),
+    )
+
+
 @shared_task(bind=True, autoretry_for=(), max_retries=0)
 def generate_proxy_job(self, job_id: int) -> None:
     """Compatibility task: route old queued messages through the shared pool."""
@@ -350,6 +393,8 @@ def maintain_proxy_pools(force: bool = False) -> int:
     """Refill demand-created pools without multiplying every bundle/region."""
     if force:
         sync_provider_geography()
+    if not settings.AUTO_REFILL_PROXY_POOLS:
+        return 0
     if settings.AUTO_CREATE_PROXY_POOL_TARGETS:
         # Even explicit eager provisioning is country-only. Region/state pools
         # remain on-demand because multiplying them across every bundle caused

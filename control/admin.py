@@ -20,7 +20,7 @@ from django.urls import path, reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
-from .models import (BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, OfficeAuditRequest, ProxyReservation, ProfileActivity, OfficeProfileAudit, ProfileDomainActivity, OfficeAuditDomain, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry, ProxyRegionCatalog, SubAdminAccount, SubAdminDomainExclusion, SubAdminScopeExclusion, ClientAccessIP)
+from .models import (BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyInventoryAlert, OfficeAuditRequest, ProxyReservation, ProfileActivity, OfficeProfileAudit, ProfileDomainActivity, OfficeAuditDomain, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry, ProxyRegionCatalog, SubAdminAccount, SubAdminDomainExclusion, SubAdminScopeExclusion, ClientAccessIP)
 from .tasks import queue_refill_proxy_pool
 
 
@@ -686,6 +686,73 @@ class ProxyGenerationJobAdmin(admin.ModelAdmin):
     list_filter = ("status", "provider_code", "country_code")
     search_fields = ("client__name", "client__office_name", "client__system_number")
     readonly_fields = ("client", "provider_code", "country_code", "region", "city", "submitted_count", "requested_count", "candidate_count", "ready_count", "status", "error", "created_at", "updated_at")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ProxyInventoryAlert)
+class ProxyInventoryAlertAdmin(admin.ModelAdmin):
+    list_display = (
+        "last_seen_at",
+        "office_name",
+        "system_number",
+        "bundle_name",
+        "provider_code",
+        "country_code",
+        "region",
+        "availability",
+        "occurrence_count",
+        "status",
+        "sent_at",
+    )
+    list_filter = (
+        "status",
+        "provider_code",
+        "country_code",
+        "office_name",
+        "config_bundle",
+    )
+    search_fields = (
+        "office_name",
+        "system_number",
+        "device_id",
+        "config_bundle__name",
+        "provider_message_id",
+        "error",
+    )
+    readonly_fields = (
+        "client",
+        "dedupe_key",
+        "config_bundle",
+        "office_name",
+        "system_number",
+        "device_id",
+        "provider_code",
+        "country_code",
+        "region",
+        "city",
+        "available_count",
+        "requested_count",
+        "occurrence_count",
+        "status",
+        "provider_message_id",
+        "error",
+        "first_seen_at",
+        "last_seen_at",
+        "sent_at",
+    )
+
+    @admin.display(description="Bundle")
+    def bundle_name(self, obj):
+        return obj.config_bundle.name if obj.config_bundle_id else "-"
+
+    @admin.display(description="Ready / requested")
+    def availability(self, obj):
+        return f"{obj.available_count} / {obj.requested_count}"
 
     def has_add_permission(self, request):
         return False

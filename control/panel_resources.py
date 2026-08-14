@@ -43,6 +43,8 @@ from .panel_views import (
     profile_display_name,
 )
 from .tasks import queue_refill_proxy_pool
+from .tasks import provider_is_configured
+from .geo_catalog import country_rows
 
 
 def _column(key: str, label: str, kind: str = "text") -> dict[str, str]:
@@ -211,6 +213,120 @@ def _grant_access_from_audit(body: dict[str, Any]) -> JsonResponse:
     )
 
 
+def _generate_office_proxy_pools(body: dict[str, Any]) -> JsonResponse:
+    office = str(body.get("office") or "").strip()
+    provider = str(body.get("provider") or "P1").strip().upper()
+    country = str(body.get("country") or "").strip().upper()
+    try:
+        target_count = int(body.get("target_count") or 1000)
+    except (TypeError, ValueError):
+        target_count = 0
+    valid_countries = {code for code, _name in country_rows()}
+    if not office:
+        return panel_json(
+            {"ok": False, "message": "Choose an office."}, status=400
+        )
+    if provider not in {"P1", "P2", "P3"}:
+        return panel_json(
+            {"ok": False, "message": "Choose P1, P2 or P3."}, status=400
+        )
+    if country not in valid_countries:
+        return panel_json(
+            {"ok": False, "message": "Choose a valid country."}, status=400
+        )
+    if not 1 <= target_count <= 5000:
+        return panel_json(
+            {"ok": False, "message": "Target stock must be between 1 and 5000."},
+            status=400,
+        )
+
+    bundle_ids = list(
+        ClientAccess.objects.filter(
+            office_name__iexact=office,
+            active=True,
+            config_bundle__active=True,
+        )
+        .order_by()
+        .values_list("config_bundle_id", flat=True)
+        .distinct()
+    )
+    bundles = list(ConfigBundle.objects.filter(pk__in=bundle_ids, active=True))
+    if not bundles:
+        return panel_json(
+            {
+                "ok": False,
+                "message": f"No active configuration bundles are assigned to {office}.",
+            },
+            status=404,
+        )
+
+    queued = ready = pending = created = 0
+    missing_credentials: list[str] = []
+    threshold = min(200, max(1, target_count // 5))
+    for bundle in bundles:
+        if not provider_is_configured(provider, bundle.get_payload()):
+            missing_credentials.append(bundle.name)
+            continue
+        target, was_created = ProxyPoolTarget.objects.get_or_create(
+            config_bundle=bundle,
+            provider_code=provider,
+            country_code=country,
+            region="",
+            city="",
+            defaults={
+                "target_count": target_count,
+                "replenish_below": threshold,
+                "active": True,
+            },
+        )
+        if was_created:
+            created += 1
+        updates = []
+        if target.target_count != target_count:
+            target.target_count = target_count
+            updates.append("target_count")
+        if target.replenish_below != threshold:
+            target.replenish_below = threshold
+            updates.append("replenish_below")
+        if not target.active:
+            target.active = True
+            updates.append("active")
+        if updates:
+            updates.append("updated_at")
+            target.save(update_fields=updates)
+        available = target.entries.filter(state="available").count()
+        if available >= target_count:
+            ready += 1
+        elif queue_refill_proxy_pool(target.pk):
+            queued += 1
+        else:
+            pending += 1
+
+    message = (
+        f"{provider} {country} requested for {office}: "
+        f"{len(bundles)} bundle(s), {queued} queued, {ready} already ready, "
+        f"{pending} already pending, {len(missing_credentials)} missing credentials."
+    )
+    return panel_json(
+        {
+            "ok": True,
+            "message": message,
+            "result": {
+                "office": office,
+                "provider": provider,
+                "country": country,
+                "target_count": target_count,
+                "bundles_found": len(bundles),
+                "targets_created": created,
+                "queued": queued,
+                "already_ready": ready,
+                "already_pending": pending,
+                "missing_credentials": missing_credentials,
+            },
+        }
+    )
+
+
 @staff_member_required(login_url="admin:login")
 @require_http_methods(["GET", "POST"])
 def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
@@ -240,6 +356,13 @@ def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
             return panel_json({"ok": False, "message": "JSON body must be an object."}, status=400)
 
         action = str(body.get("action") or "").strip().lower()
+        if action == "generate_office":
+            if not request.user.is_superuser:
+                return panel_json(
+                    {"ok": False, "message": "Super-admin access is required."},
+                    status=403,
+                )
+            return _generate_office_proxy_pools(body)
         try:
             target_id = int(body.get("target_id"))
         except (TypeError, ValueError):
@@ -522,7 +645,7 @@ def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
         # These option lists change rarely, while the panel can be refreshed
         # repeatedly during operations.  Cache them briefly so every refresh
         # does not run three DISTINCT scans over the large target table.
-        option_cache_key = "panel:proxy-pool-options:v1"
+        option_cache_key = "panel:proxy-pool-options:v2"
         options = safe_cache_get(option_cache_key)
         if options is None:
             options = {
@@ -544,6 +667,18 @@ def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
                     .distinct()
                     .order_by("country_code")
                 ),
+                "generation_offices": list(
+                    ClientAccess.objects.filter(active=True)
+                    .exclude(office_name="")
+                    .order_by("office_name")
+                    .values_list("office_name", flat=True)
+                    .distinct()
+                ),
+                "generation_countries": [
+                    {"code": code, "name": name}
+                    for code, name in country_rows()
+                ],
+                "generation_providers": ["P1", "P2", "P3"],
             }
             safe_cache_set(option_cache_key, options, 60)
         bundle_options = options["bundles"]
@@ -620,6 +755,9 @@ def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
                 "bundles": bundle_options,
                 "providers": provider_options,
                 "countries": country_options,
+                "generation_offices": options["generation_offices"],
+                "generation_countries": options["generation_countries"],
+                "generation_providers": options["generation_providers"],
             },
             "pagination": {
                 "page": page_number,

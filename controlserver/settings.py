@@ -194,6 +194,28 @@ BOOTSTRAP_RATE_LIMIT_PER_MINUTE = int(
 AUTO_CREATE_PROXY_POOL_TARGETS = env_bool(
     "AUTO_CREATE_PROXY_POOL_TARGETS", False
 )
+# App requests and the periodic maintainer never generate inventory unless an
+# operator explicitly enables these switches. Manual admin refills remain
+# available regardless of these settings.
+AUTO_GENERATE_PROXY_ON_DEMAND = env_bool(
+    "AUTO_GENERATE_PROXY_ON_DEMAND", False
+)
+AUTO_REFILL_PROXY_POOLS = env_bool("AUTO_REFILL_PROXY_POOLS", False)
+
+PROXY_ALERT_SMS_ENABLED = env_bool("PROXY_ALERT_SMS_ENABLED", False)
+PROXY_ALERT_SMS_TO = os.getenv("PROXY_ALERT_SMS_TO", "").strip()
+PROXY_ALERT_COOLDOWN_SECONDS = int(
+    os.getenv("PROXY_ALERT_COOLDOWN_SECONDS", "1800")
+)
+PROXY_ALERT_SMS_TIMEOUT_SECONDS = int(
+    os.getenv("PROXY_ALERT_SMS_TIMEOUT_SECONDS", "10")
+)
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
+TWILIO_FROM_NUMBER = os.getenv("TWILIO_FROM_NUMBER", "").strip()
+TWILIO_MESSAGING_SERVICE_SID = os.getenv(
+    "TWILIO_MESSAGING_SERVICE_SID", ""
+).strip()
 
 CELERY_BROKER_URL = os.getenv("REDIS_URL", "").strip()
 CELERY_RESULT_BACKEND = CELERY_BROKER_URL

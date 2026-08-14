@@ -15,7 +15,7 @@ from django.utils import timezone
 from .admin import import_catalog_zip
 from .models import (
     BootstrapAudit, ClientAccess, ClientAccessIP, ConfigBundle, ExtensionPackage, ProfileDomainActivity,
-    MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyPoolTarget,
+    MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyInventoryAlert, ProxyPoolTarget,
     ProxyReservation, ProfileCreateLease, ProfileCreateQueue,
 )
 from .proxy_jobs import reserve_pool_proxies
@@ -396,6 +396,46 @@ class ControlApiTests(TestCase):
         self.assertEqual(job["ready_count"], 5)
         self.assertEqual(len(job["proxies"]), 5)
         self.assertEqual(job["status"], "ready")
+
+    def test_empty_inventory_does_not_generate_and_records_alert(self):
+        token = self.bootstrap().json()["access_token"]
+        with mock.patch("control.views.queue_refill_proxy_pool") as queue_refill:
+            response = self.client.post(
+                reverse("control:proxy-job-create"),
+                data=json.dumps({"provider": "P1", "country": "GB", "count": 2}),
+                content_type="application/json",
+                HTTP_AUTHORIZATION=f"Bearer {token}",
+                HTTP_X_DEVICE_ID="device-one",
+                REMOTE_ADDR="203.0.113.10",
+            )
+
+        self.assertEqual(response.status_code, 201)
+        job = response.json()["job"]
+        self.assertEqual(job["status"], "failed")
+        self.assertEqual(job["ready_count"], 0)
+        self.assertIn("administrator has been notified", job["error"])
+        queue_refill.assert_not_called()
+        self.assertFalse(
+            ProxyPoolTarget.objects.filter(country_code="GB").exists()
+        )
+        alert = ProxyInventoryAlert.objects.get()
+        self.assertEqual(alert.office_name, "1115")
+        self.assertEqual(alert.available_count, 0)
+        self.assertEqual(alert.requested_count, 2)
+        self.assertEqual(alert.status, "disabled")
+
+        second = self.client.post(
+            reverse("control:proxy-job-create"),
+            data=json.dumps({"provider": "P1", "country": "GB", "count": 2}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+            HTTP_X_DEVICE_ID="device-one",
+            REMOTE_ADDR="203.0.113.10",
+        )
+        self.assertEqual(second.status_code, 201)
+        self.assertEqual(ProxyInventoryAlert.objects.count(), 1)
+        alert.refresh_from_db()
+        self.assertEqual(alert.occurrence_count, 2)
 
     def test_expired_profile_lease_does_not_block_the_next_device(self):
         second = ClientAccess.objects.create(
@@ -799,6 +839,14 @@ class StaffPanelTests(TestCase):
             browser_group_id="701",
             browser_group_name="Testing",
         )
+        self.bundle.set_payload(
+            {
+                "NIMBLE_ACCOUNT_NAME": "account",
+                "NIMBLE_PIPELINE_NAME": "pipeline",
+                "NIMBLE_PIPELINE_PASSWORD": "password",
+            }
+        )
+        self.bundle.save()
         self.client_access = ClientAccess.objects.create(
             name="North device 1",
             ipv4="203.0.113.40",
@@ -873,6 +921,55 @@ class StaffPanelTests(TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertIn("rows", response.json())
                 self.assertIn("columns", response.json())
+
+    def test_super_admin_can_generate_provider_country_for_every_office_bundle(self):
+        second_bundle = ConfigBundle.objects.create(
+            name="Panel config 2",
+            browser_group_id="702",
+            browser_group_name="Testing 2",
+        )
+        second_bundle.set_payload(self.bundle.get_payload())
+        second_bundle.save()
+        ClientAccess.objects.create(
+            name="North device 2",
+            ipv4="203.0.113.41",
+            device_id="device-panel-two",
+            office_name="North",
+            system_number="2",
+            profile_name="North Two",
+            config_bundle=second_bundle,
+        )
+        self.login()
+        url = reverse("control:panel-resource-api", args=("proxy-pools",))
+        with mock.patch(
+            "control.panel_resources.queue_refill_proxy_pool",
+            return_value=True,
+        ) as queue_refill:
+            response = self.client.post(
+                url,
+                data=json.dumps(
+                    {
+                        "action": "generate_office",
+                        "office": "North",
+                        "provider": "P1",
+                        "country": "GB",
+                        "target_count": 1000,
+                    }
+                ),
+                content_type="application/json",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        result = response.json()["result"]
+        self.assertEqual(result["bundles_found"], 2)
+        self.assertEqual(result["queued"], 2)
+        self.assertEqual(
+            ProxyPoolTarget.objects.filter(
+                provider_code="P1", country_code="GB"
+            ).count(),
+            2,
+        )
+        self.assertEqual(queue_refill.call_count, 2)
 
     def test_access_audit_uses_cached_cursor_pages_without_exact_count(self):
         for index in range(12):

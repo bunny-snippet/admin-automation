@@ -37,6 +37,7 @@ from .models import (
 MAX_PROFILES_PER_REQUEST = 50
 from .proxy_jobs import get_or_create_pool_target, reserve_pool_proxies, reserve_static_proxies
 from .tasks import queue_refill_proxy_pool
+from .inventory_alerts import record_proxy_inventory_shortage
 from .openapi import OPENAPI_SCHEMA, SWAGGER_HTML
 
 
@@ -779,10 +780,32 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
         elif job.ready_count:
             job.status = "partial"
         else:
-            # The background pool worker will attach ready sessions to this job.
-            job.status = "waiting_generation"
-        job.save(update_fields=("ready_count", "status", "updated_at"))
-        if settings.CELERY_BROKER_URL:
+            job.status = (
+                "waiting_generation"
+                if settings.AUTO_GENERATE_PROXY_ON_DEMAND
+                else "failed"
+            )
+        if job.ready_count < candidate_count and not settings.AUTO_GENERATE_PROXY_ON_DEMAND:
+            job.error = (
+                f"Only {job.ready_count} proxy/proxies are available for "
+                f"{provider_code} {country_code}. Automatic generation is disabled; "
+                "the administrator has been notified."
+            )
+            record_proxy_inventory_shortage(
+                client=client,
+                provider_code=provider_code,
+                country_code=country_code,
+                region=region,
+                city=city,
+                available_count=job.ready_count,
+                requested_count=candidate_count,
+            )
+        job.save(update_fields=("ready_count", "status", "error", "updated_at"))
+        if (
+            settings.AUTO_GENERATE_PROXY_ON_DEMAND
+            and settings.CELERY_BROKER_URL
+            and job.ready_count < candidate_count
+        ):
             target = get_or_create_pool_target(
                 client=client, provider_code=provider_code,
                 country_code=country_code, region=region, city=city,

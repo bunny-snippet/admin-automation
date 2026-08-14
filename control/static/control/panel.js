@@ -496,6 +496,10 @@
     const providers = data.options?.providers || [];
     const countries = data.options?.countries || [];
     const selected = state.proxyFilters;
+    const generationOffices = data.options?.generation_offices || [];
+    const generationCountries = data.options?.generation_countries || [];
+    const generationProviders = data.options?.generation_providers || ["P1", "P2", "P3"];
+    const generationCard = `<article class="panel-card"><div class="panel-header"><div><h3>Generate inventory for an office</h3><p>Creates or refills the selected provider/country target for every active bundle assigned to the office. P1 is the default.</p></div></div><div class="panel-body"><form class="toolbar proxy-pool-toolbar" id="office-proxy-generator"><div class="field field-wide"><label>Office</label><select name="office" required><option value="">Choose office</option>${generationOffices.map((office) => `<option value="${e(office)}">${e(office)}</option>`).join("")}</select></div><div class="field"><label>Provider</label><select name="provider" required>${generationProviders.map((value) => `<option value="${e(value)}" ${value === "P1" ? "selected" : ""}>${e(value)}</option>`).join("")}</select></div><div class="field field-wide"><label>Country</label><select name="country" required><option value="">Choose country</option>${generationCountries.map((item) => `<option value="${e(item.code)}">${e(item.name)} (${e(item.code)})</option>`).join("")}</select></div><div class="field"><label>Target per bundle</label><input type="number" name="target_count" value="1000" min="1" max="5000" required></div><button class="button button-primary" type="submit">Generate for all bundles</button></form><div id="office-proxy-result" class="cell-muted"></div></div></article>`;
     const poolRows = data.rows.map((row) => {
       const availabilityClass = Number(row.available) === 0 ? "is-danger" : Number(row.available) <= Number(row.threshold || 200) ? "is-warning" : "is-success";
       const controls = row.active
@@ -505,6 +509,30 @@
     }).join("");
     const metricScope = e(data.metrics.scope || "matching targets");
     content.innerHTML = `<div class="page-intro"><div><span class="eyebrow">Infrastructure</span><h2>Proxy pool manager</h2><p>Track every bundle/group, provider and country. Refill, pause or clear a specific pool without terminal commands.</p></div><a class="button button-secondary" href="${e(data.admin_url)}">Django Admin</a></div><form class="toolbar proxy-pool-toolbar" id="proxy-pool-filters"><div class="field field-wide"><label>Search</label><input name="q" value="${e(state.resourceQuery)}" placeholder="Bundle, group, provider or country"></div><div class="field"><label>Bundle / group</label><select name="bundle"><option value="">All bundles</option>${bundles.map((bundle) => `<option value="${e(bundle.id)}" ${String(selected.bundle) === String(bundle.id) ? "selected" : ""}>${e(bundle.name)} · ${e(bundle.browser_group_id || "-")}</option>`).join("")}</select></div><div class="field"><label>Provider</label><select name="provider"><option value="">All providers</option>${providers.map((value) => `<option value="${e(value)}" ${selected.provider === value ? "selected" : ""}>${e(value)}</option>`).join("")}</select></div><div class="field"><label>Country</label><select name="country"><option value="">All countries</option>${countries.map((value) => `<option value="${e(value)}" ${selected.country === value ? "selected" : ""}>${e(value)}</option>`).join("")}</select></div><div class="field"><label>Stock</label><select name="status"><option value="">All</option><option value="empty" ${selected.status === "empty" ? "selected" : ""}>Empty (0)</option><option value="low" ${selected.status === "low" ? "selected" : ""}>Low (≤200)</option><option value="ready" ${selected.status === "ready" ? "selected" : ""}>Ready (&gt;200)</option></select></div><button class="button button-primary" type="submit">Apply filters</button><button class="button button-secondary" type="button" id="clear-proxy-filters">Clear</button></form><div class="metric-grid">${metricCard("Pool targets", data.metrics.total, metricScope)}${metricCard("Low stock", data.metrics.low, "Visible rows at or below threshold")}${metricCard("Empty pools", data.metrics.empty, "Visible rows with no available proxy")}${metricCard("Available proxies", data.metrics.available, "Visible rows")}</div><article class="panel-card"><div class="panel-header"><div><h3>Pool inventory</h3><p>${data.pagination.total === null || data.pagination.total === undefined ? "Showing the current page · use filters to narrow results" : `${number(data.pagination.total)} matching targets`} · clear only affects unreserved entries</p></div></div><div class="panel-body-flush"><div class="table-wrap"><table class="data-table management-table proxy-pool-table"><thead><tr><th>Bundle / group</th><th>Provider</th><th>Country / location</th><th>Available</th><th>Reserved</th><th>Status</th><th>Actions</th></tr></thead><tbody>${poolRows || '<tr><td colspan="7" class="empty-state">No proxy pools match these filters.</td></tr>'}</tbody></table></div></div>${pagination(data.pagination, "resource")}</article>`;
+    content.querySelector(".page-intro").insertAdjacentHTML("afterend", generationCard);
+    document.getElementById("office-proxy-generator").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const button = form.querySelector('button[type="submit"]');
+      const result = document.getElementById("office-proxy-result");
+      const values = new FormData(form);
+      button.disabled = true;
+      result.textContent = "Creating targets and queueing manual generation...";
+      try {
+        const response = await writeApi(url, {
+          action: "generate_office",
+          office: String(values.get("office") || ""),
+          provider: String(values.get("provider") || "P1"),
+          country: String(values.get("country") || ""),
+          target_count: Number(values.get("target_count") || 1000),
+        });
+        result.innerHTML = `<span class="status-pill is-success">Queued</span> ${e(response.message)}`;
+      } catch (error) {
+        result.innerHTML = `<span class="status-pill is-danger">Failed</span> ${e(error.message)}`;
+      } finally {
+        button.disabled = false;
+      }
+    });
     document.getElementById("proxy-pool-filters").addEventListener("submit", (event) => {
       event.preventDefault();
       const values = new FormData(event.currentTarget);
