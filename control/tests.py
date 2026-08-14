@@ -7,6 +7,7 @@ from datetime import timedelta
 from unittest import mock
 
 from django.contrib.auth import get_user_model
+from django.core.management import call_command
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
@@ -545,6 +546,59 @@ class ControlApiTests(TestCase):
             "active",
         )
 
+    def test_queued_profile_request_can_be_cancelled(self):
+        second = ClientAccess.objects.create(
+            name="Office system 2",
+            ipv4="203.0.113.10",
+            device_id="device-two",
+            office_name="1115",
+            system_number="2",
+            profile_name="Device Beta",
+            config_bundle=self.bundle,
+        )
+        first_token = self.bootstrap().json()["access_token"]
+        second_token = self.bootstrap(device_id="device-two").json()["access_token"]
+        self.client.post(
+            reverse("control:profile-lease-acquire"),
+            data=json.dumps({"group_id": "2255", "requested_count": 1}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {first_token}",
+            HTTP_X_DEVICE_ID="device-one",
+            HTTP_X_CLIENT_IPV4="203.0.113.10",
+            REMOTE_ADDR="203.0.113.10",
+        )
+        queued = self.client.post(
+            reverse("control:profile-lease-acquire"),
+            data=json.dumps({"group_id": "2255", "requested_count": 1}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {second_token}",
+            HTTP_X_DEVICE_ID="device-two",
+            HTTP_X_CLIENT_IPV4="203.0.113.10",
+            REMOTE_ADDR="203.0.113.10",
+        ).json()
+
+        response = self.client.post(
+            reverse("control:profile-lease-release"),
+            data=json.dumps(
+                {
+                    "group_id": "2255",
+                    "request_token": queued["request_token"],
+                }
+            ),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {second_token}",
+            HTTP_X_DEVICE_ID="device-two",
+            HTTP_X_CLIENT_IPV4="203.0.113.10",
+            REMOTE_ADDR="203.0.113.10",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["cancelled"])
+        self.assertEqual(
+            ProfileCreateQueue.objects.get(client=second).status,
+            "expired",
+        )
+
     def test_proxy_job_returns_per_line_socks5_protocol(self):
         country = ProxyCountryFile(
             provider=self.provider,
@@ -855,10 +909,18 @@ class ProxyPoolTaskTests(TestCase):
         delay.assert_called_once_with(target.pk)
         target.refresh_from_db()
         self.assertTrue(target.refill_pending)
+        self.assertIsNotNone(target.refill_requested_at)
+
+        target.refill_requested_at = timezone.now() - timedelta(minutes=16)
+        target.save(update_fields=("refill_requested_at",))
+        with mock.patch("control.tasks.refill_proxy_pool.delay") as stale_delay:
+            self.assertTrue(queue_refill_proxy_pool(target.pk))
+        stale_delay.assert_called_once_with(target.pk)
 
         self.assertEqual(refill_proxy_pool.run(target.pk), 5)
         target.refresh_from_db()
         self.assertFalse(target.refill_pending)
+        self.assertIsNone(target.refill_requested_at)
 
     def test_refill_claim_is_released_when_enqueue_fails(self):
         target = ProxyPoolTarget.objects.create(
@@ -873,6 +935,59 @@ class ProxyPoolTaskTests(TestCase):
             self.assertFalse(queue_refill_proxy_pool(target.pk))
         target.refresh_from_db()
         self.assertFalse(target.refill_pending)
+        self.assertIsNone(target.refill_requested_at)
+
+    def test_office_pool_command_queues_every_assigned_bundle(self):
+        first_payload = self.bundle.get_payload()
+        first_payload.update(
+            {
+                "NIMBLE_ACCOUNT_NAME": "account-one",
+                "NIMBLE_PIPELINE_NAME": "pipeline-one",
+                "NIMBLE_PIPELINE_PASSWORD": "password-one",
+            }
+        )
+        self.bundle.set_payload(first_payload)
+        self.bundle.save()
+        second_bundle = ConfigBundle(name="Pool config 2", version=1)
+        second_bundle.set_payload(
+            {
+                "NIMBLE_ACCOUNT_NAME": "account-two",
+                "NIMBLE_PIPELINE_NAME": "pipeline-two",
+                "NIMBLE_PIPELINE_PASSWORD": "password-two",
+            }
+        )
+        second_bundle.save()
+        ClientAccess.objects.create(
+            name="Pool device 2",
+            ipv4="203.0.113.71",
+            device_id="pool-device-two",
+            office_name="POOL OFFICE",
+            system_number="2",
+            config_bundle=second_bundle,
+        )
+        output = io.StringIO()
+        with mock.patch(
+            "control.tasks.refill_proxy_pool.delay"
+        ) as delay:
+            call_command(
+                "queue_office_proxy_pools",
+                "--office",
+                "Pool office",
+                "--provider",
+                "P1",
+                "--country",
+                "US",
+                "--country",
+                "GB",
+                stdout=output,
+            )
+
+        self.assertEqual(
+            ProxyPoolTarget.objects.filter(provider_code="P1").count(),
+            4,
+        )
+        self.assertEqual(delay.call_count, 4)
+        self.assertIn("Unique assigned bundles: 2", output.getvalue())
 
 
 class StaffPanelTests(TestCase):

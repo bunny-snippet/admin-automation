@@ -5,6 +5,7 @@ import logging
 import re
 import secrets
 import urllib.parse
+from datetime import timedelta
 
 from celery import shared_task
 from django.conf import settings
@@ -306,22 +307,39 @@ def refill_proxy_pool(self, target_id: int) -> int:
             pass
         raise
     finally:
-        ProxyPoolTarget.objects.filter(pk=target_id).update(refill_pending=False)
+        ProxyPoolTarget.objects.filter(pk=target_id).update(
+            refill_pending=False,
+            refill_requested_at=None,
+        )
 
 
 def queue_refill_proxy_pool(target_id: int) -> bool:
-    """Queue at most one refill without exposing broker failures to HTTP."""
-    claimed = ProxyPoolTarget.objects.filter(
+    """Queue one refill and automatically recover abandoned pending flags."""
+    now = timezone.now()
+    stale_before = now - timedelta(
+        seconds=max(60, int(getattr(settings, "PROXY_REFILL_STALE_SECONDS", 900)))
+    )
+    claimable = ProxyPoolTarget.objects.filter(
         pk=target_id,
         active=True,
-        refill_pending=False,
-    ).update(refill_pending=True)
+    ).filter(
+        Q(refill_pending=False)
+        | Q(refill_requested_at__isnull=True)
+        | Q(refill_requested_at__lte=stale_before)
+    )
+    claimed = claimable.update(
+        refill_pending=True,
+        refill_requested_at=now,
+    )
     if not claimed:
         return False
     try:
         refill_proxy_pool.delay(target_id)
     except Exception as exc:
-        ProxyPoolTarget.objects.filter(pk=target_id).update(refill_pending=False)
+        ProxyPoolTarget.objects.filter(pk=target_id).update(
+            refill_pending=False,
+            refill_requested_at=None,
+        )
         # The job and any already-reserved inventory are stored in MySQL. A
         # Redis/Celery outage must not turn an otherwise valid API request into
         # HTTP 500; the periodic maintainer can queue this target after Redis

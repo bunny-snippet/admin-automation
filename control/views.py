@@ -584,6 +584,14 @@ def acquire_profile_lease(request: HttpRequest) -> JsonResponse:
                 queue.save(update_fields=("status", "lease_token", "expires_at", "updated_at"))
                 return _json_response({"allowed": False, "message": "Profile request expired. Please try again."}, status=410)
         else:
+            # A desktop retry supersedes its own abandoned queued request. A
+            # crashed/closed app must not leave an invisible FIFO blocker for
+            # the same device and group until the long queue expiry.
+            ProfileCreateQueue.objects.filter(
+                scope_key=key,
+                client=client,
+                status="queued",
+            ).update(status="expired", expires_at=now)
             queue = ProfileCreateQueue.objects.create(
                 scope_key=key,
                 request_token=secrets.token_urlsafe(48),
@@ -654,12 +662,23 @@ def release_profile_lease(request: HttpRequest) -> JsonResponse:
         body = json.loads(request.body.decode("utf-8"))
         group_id = str(body.get("group_id") or "").strip()[:64]
         lease_id = str(body.get("lease_id") or "").strip()[:96]
-        if not lease_id or not _lease_group_allowed(client, group_id):
+        request_token = str(body.get("request_token") or "").strip()[:96]
+        if (not lease_id and not request_token) or not _lease_group_allowed(client, group_id):
             raise ValueError("Invalid profile lease")
     except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError,
             signing.BadSignature, signing.SignatureExpired, ClientAccess.DoesNotExist):
         return _json_response({"allowed": False, "message": "Access denied."}, status=403)
     key = _profile_lease_key(client, group_id)
+    if request_token and not lease_id:
+        cancelled = ProfileCreateQueue.objects.filter(
+            scope_key=key,
+            request_token=request_token,
+            client=client,
+            status="queued",
+        ).update(status="expired", expires_at=timezone.now())
+        return _json_response(
+            {"allowed": bool(cancelled), "released": False, "cancelled": bool(cancelled)}
+        )
     deleted, _ = ProfileCreateLease.objects.filter(
         lease_key=key, owner_token=lease_id, client=client,
     ).delete()
