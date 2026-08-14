@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import logging
 import re
 import secrets
 import urllib.parse
@@ -28,6 +29,7 @@ from .proxy_jobs import fulfill_waiting_jobs, get_or_create_pool_target, proxy_f
 DEFAULT_POOL_TARGET = 1000
 DEFAULT_POOL_THRESHOLD = 200
 SUPPORTED_DYNAMIC_PROVIDERS = frozenset({"P1", "P2", "P3"})
+logger = logging.getLogger(__name__)
 
 
 def _value(config: dict, *names: str) -> str:
@@ -305,7 +307,7 @@ def refill_proxy_pool(self, target_id: int) -> int:
 
 
 def queue_refill_proxy_pool(target_id: int) -> bool:
-    """Queue at most one outstanding refill task for a target."""
+    """Queue at most one refill without exposing broker failures to HTTP."""
     claimed = ProxyPoolTarget.objects.filter(
         pk=target_id,
         active=True,
@@ -315,9 +317,14 @@ def queue_refill_proxy_pool(target_id: int) -> bool:
         return False
     try:
         refill_proxy_pool.delay(target_id)
-    except Exception:
+    except Exception as exc:
         ProxyPoolTarget.objects.filter(pk=target_id).update(refill_pending=False)
-        raise
+        # The job and any already-reserved inventory are stored in MySQL. A
+        # Redis/Celery outage must not turn an otherwise valid API request into
+        # HTTP 500; the periodic maintainer can queue this target after Redis
+        # recovers.
+        logger.warning("Could not queue proxy refill for target %s: %s", target_id, exc)
+        return False
     return True
 
 

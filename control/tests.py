@@ -778,8 +778,7 @@ class ProxyPoolTaskTests(TestCase):
             "control.tasks.refill_proxy_pool.delay",
             side_effect=RuntimeError("broker"),
         ):
-            with self.assertRaises(RuntimeError):
-                queue_refill_proxy_pool(target.pk)
+            self.assertFalse(queue_refill_proxy_pool(target.pk))
         target.refresh_from_db()
         self.assertFalse(target.refill_pending)
 
