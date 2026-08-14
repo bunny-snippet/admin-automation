@@ -672,7 +672,11 @@ class ProxyPoolTaskTests(TestCase):
             },
             clear=False,
         ):
-            ensure_pool_targets(target_count=5, replenish_below=2)
+            ensure_pool_targets(
+                target_count=5,
+                replenish_below=2,
+                include_regions=True,
+            )
 
         self.assertEqual(
             ProxyPoolTarget.objects.filter(provider_code="P1", region="").count(),

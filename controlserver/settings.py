@@ -187,6 +187,14 @@ BOOTSTRAP_RATE_LIMIT_PER_MINUTE = int(
     os.getenv("BOOTSTRAP_RATE_LIMIT_PER_MINUTE", "30")
 )
 
+# Creating every provider/country/region pool for every bundle produced
+# hundreds of millions of unused rows on large deployments. Pools are now
+# created on demand by the proxy-job API/admin. This switch exists only for
+# small installations that explicitly want eager country-level provisioning.
+AUTO_CREATE_PROXY_POOL_TARGETS = env_bool(
+    "AUTO_CREATE_PROXY_POOL_TARGETS", False
+)
+
 CELERY_BROKER_URL = os.getenv("REDIS_URL", "").strip()
 CELERY_RESULT_BACKEND = CELERY_BROKER_URL
 CELERY_TASK_DEFAULT_QUEUE = "proxy-jobs"

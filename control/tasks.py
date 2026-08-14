@@ -7,6 +7,7 @@ import secrets
 import urllib.parse
 
 from celery import shared_task
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Count, Q
 
@@ -142,7 +143,7 @@ def ensure_pool_targets(
     *,
     target_count: int = DEFAULT_POOL_TARGET,
     replenish_below: int = DEFAULT_POOL_THRESHOLD,
-    include_regions: bool = True,
+    include_regions: bool = False,
 ) -> tuple[int, int]:
     """Create every global country target and supported P1/P2 region target."""
     target_count = max(1, int(target_count))
@@ -346,10 +347,14 @@ def generate_proxy_job(self, job_id: int) -> None:
 
 @shared_task
 def maintain_proxy_pools(force: bool = False) -> int:
-    """Create global pools and refill low country/region inventory."""
+    """Refill demand-created pools without multiplying every bundle/region."""
     if force:
         sync_provider_geography()
-    ensure_pool_targets()
+    if settings.AUTO_CREATE_PROXY_POOL_TARGETS:
+        # Even explicit eager provisioning is country-only. Region/state pools
+        # remain on-demand because multiplying them across every bundle caused
+        # the runaway inventory this guard is designed to prevent.
+        ensure_pool_targets(include_regions=False)
     queued = 0
     targets = (
         ProxyPoolTarget.objects.filter(active=True)
