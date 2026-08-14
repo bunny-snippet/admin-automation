@@ -24,7 +24,7 @@ def record_proxy_inventory_shortage(
     available_count: int,
     requested_count: int,
 ) -> ProxyInventoryAlert:
-    """Record every shortage but send at most one SMS per scope/cooldown."""
+    """Record every shortage but send at most one alert per scope/cooldown."""
     now = timezone.now()
     cooldown = max(60, int(settings.PROXY_ALERT_COOLDOWN_SECONDS))
     window = int(now.timestamp()) // cooldown
@@ -68,9 +68,9 @@ def record_proxy_inventory_shortage(
         alert.refresh_from_db()
         return alert
 
-    if not settings.PROXY_ALERT_SMS_ENABLED:
+    if not settings.PROXY_ALERT_ENABLED:
         alert.status = "disabled"
-        alert.error = "SMS delivery is disabled in server configuration."
+        alert.error = "Proxy inventory alerts are disabled in server configuration."
         alert.save(update_fields=("status", "error"))
         return alert
 
@@ -82,7 +82,7 @@ def record_proxy_inventory_shortage(
         except Exception as exc:
             ProxyInventoryAlert.objects.filter(pk=alert.pk).update(
                 status="queue_failed",
-                error=f"SMS queue unavailable: {type(exc).__name__}: {exc}"[:1000],
+                error=f"Alert queue unavailable: {type(exc).__name__}: {exc}"[:1000],
             )
             logger.warning("Could not queue proxy alert %s: %s", alert.pk, exc)
 

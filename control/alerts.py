@@ -11,8 +11,12 @@ from django.conf import settings
 from .models import ProxyInventoryAlert
 
 
-class SMSConfigurationError(RuntimeError):
+class AlertConfigurationError(RuntimeError):
     pass
+
+
+# Backward-compatible import for any older queued worker code.
+SMSConfigurationError = AlertConfigurationError
 
 
 def alert_message(alert: ProxyInventoryAlert) -> str:
@@ -30,7 +34,7 @@ def alert_message(alert: ProxyInventoryAlert) -> str:
     )
 
 
-def _recipients() -> list[str]:
+def _twilio_recipients() -> list[str]:
     return [
         value.strip()
         for value in str(settings.PROXY_ALERT_SMS_TO or "").split(",")
@@ -44,13 +48,13 @@ def send_twilio_proxy_alert(alert: ProxyInventoryAlert) -> list[str]:
     auth_token = str(settings.TWILIO_AUTH_TOKEN or "").strip()
     from_number = str(settings.TWILIO_FROM_NUMBER or "").strip()
     messaging_service = str(settings.TWILIO_MESSAGING_SERVICE_SID or "").strip()
-    recipients = _recipients()
+    recipients = _twilio_recipients()
     if not account_sid or not auth_token or not recipients:
-        raise SMSConfigurationError(
+        raise AlertConfigurationError(
             "TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and PROXY_ALERT_SMS_TO are required."
         )
     if not from_number and not messaging_service:
-        raise SMSConfigurationError(
+        raise AlertConfigurationError(
             "Set TWILIO_FROM_NUMBER or TWILIO_MESSAGING_SERVICE_SID."
         )
 
@@ -83,7 +87,7 @@ def send_twilio_proxy_alert(alert: ProxyInventoryAlert) -> list[str]:
         try:
             with urllib.request.urlopen(
                 request,
-                timeout=settings.PROXY_ALERT_SMS_TIMEOUT_SECONDS,
+                timeout=settings.PROXY_ALERT_TIMEOUT_SECONDS,
             ) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
@@ -91,3 +95,69 @@ def send_twilio_proxy_alert(alert: ProxyInventoryAlert) -> list[str]:
             raise RuntimeError(f"Twilio HTTP {exc.code}: {detail}") from exc
         message_ids.append(str(payload.get("sid") or ""))
     return message_ids
+
+
+def _telegram_chat_ids() -> list[str]:
+    return [
+        value.strip()
+        for value in str(settings.TELEGRAM_CHAT_ID or "").split(",")
+        if value.strip()
+    ]
+
+
+def send_telegram_proxy_alert(alert: ProxyInventoryAlert) -> list[str]:
+    """Send a free push notification through the Telegram Bot API."""
+    token = str(settings.TELEGRAM_BOT_TOKEN or "").strip()
+    chat_ids = _telegram_chat_ids()
+    if not token or not chat_ids:
+        raise AlertConfigurationError(
+            "TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required."
+        )
+
+    endpoint = (
+        "https://api.telegram.org/bot"
+        f"{urllib.parse.quote(token, safe=':')}/sendMessage"
+    )
+    message_ids: list[str] = []
+    for chat_id in chat_ids:
+        request = urllib.request.Request(
+            endpoint,
+            data=urllib.parse.urlencode(
+                {
+                    "chat_id": chat_id,
+                    "text": alert_message(alert),
+                    "disable_web_page_preview": "true",
+                }
+            ).encode("utf-8"),
+            method="POST",
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(
+                request,
+                timeout=settings.PROXY_ALERT_TIMEOUT_SECONDS,
+            ) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")[:500]
+            raise RuntimeError(f"Telegram HTTP {exc.code}: {detail}") from exc
+        if not payload.get("ok"):
+            raise RuntimeError(
+                f"Telegram API error: {str(payload.get('description') or payload)[:500]}"
+            )
+        message_ids.append(str((payload.get("result") or {}).get("message_id") or ""))
+    return message_ids
+
+
+def send_proxy_alert(alert: ProxyInventoryAlert) -> list[str]:
+    provider = str(settings.PROXY_ALERT_PROVIDER or "telegram").strip().lower()
+    if provider == "telegram":
+        return send_telegram_proxy_alert(alert)
+    if provider == "twilio":
+        return send_twilio_proxy_alert(alert)
+    raise AlertConfigurationError(
+        "PROXY_ALERT_PROVIDER must be 'telegram' or 'twilio'."
+    )

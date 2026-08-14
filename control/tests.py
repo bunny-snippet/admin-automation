@@ -437,6 +437,54 @@ class ControlApiTests(TestCase):
         alert.refresh_from_db()
         self.assertEqual(alert.occurrence_count, 2)
 
+    @override_settings(
+        TELEGRAM_BOT_TOKEN="123456:test-token",
+        TELEGRAM_CHAT_ID="10001,10002",
+        PROXY_ALERT_TIMEOUT_SECONDS=7,
+    )
+    def test_telegram_inventory_alert_sends_to_each_configured_chat(self):
+        from urllib.parse import parse_qs
+
+        from .alerts import send_telegram_proxy_alert
+
+        alert = ProxyInventoryAlert.objects.create(
+            dedupe_key="a" * 64,
+            client=self.client_access,
+            config_bundle=self.bundle,
+            office_name="1115",
+            system_number="1",
+            device_id="device-one",
+            provider_code="P1",
+            country_code="GB",
+            available_count=0,
+            requested_count=2,
+        )
+        first = mock.MagicMock()
+        first.__enter__.return_value.read.return_value = json.dumps(
+            {"ok": True, "result": {"message_id": 91}}
+        ).encode("utf-8")
+        second = mock.MagicMock()
+        second.__enter__.return_value.read.return_value = json.dumps(
+            {"ok": True, "result": {"message_id": 92}}
+        ).encode("utf-8")
+
+        with mock.patch(
+            "control.alerts.urllib.request.urlopen", side_effect=(first, second)
+        ) as urlopen:
+            message_ids = send_telegram_proxy_alert(alert)
+
+        self.assertEqual(message_ids, ["91", "92"])
+        self.assertEqual(urlopen.call_count, 2)
+        first_request = urlopen.call_args_list[0].args[0]
+        self.assertEqual(
+            first_request.full_url,
+            "https://api.telegram.org/bot123456:test-token/sendMessage",
+        )
+        form = parse_qs(first_request.data.decode("utf-8"))
+        self.assertEqual(form["chat_id"], ["10001"])
+        self.assertIn("Office: 1115", form["text"][0])
+        self.assertIn("P1 GB", form["text"][0])
+
     def test_expired_profile_lease_does_not_block_the_next_device(self):
         second = ClientAccess.objects.create(
             name="Office system 2",

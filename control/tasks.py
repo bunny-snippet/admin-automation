@@ -333,8 +333,8 @@ def queue_refill_proxy_pool(target_id: int) -> bool:
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)
 def send_proxy_inventory_alert(self, alert_id: int) -> None:
-    """Deliver a durable proxy shortage record as a normal SMS."""
-    from .alerts import SMSConfigurationError, send_twilio_proxy_alert
+    """Deliver a durable proxy shortage record through the configured channel."""
+    from .alerts import AlertConfigurationError, send_proxy_alert
 
     try:
         alert = ProxyInventoryAlert.objects.select_related("config_bundle").get(
@@ -342,15 +342,15 @@ def send_proxy_inventory_alert(self, alert_id: int) -> None:
         )
     except ProxyInventoryAlert.DoesNotExist:
         return
-    if not settings.PROXY_ALERT_SMS_ENABLED:
+    if not settings.PROXY_ALERT_ENABLED:
         ProxyInventoryAlert.objects.filter(pk=alert_id).update(
             status="disabled",
-            error="SMS delivery is disabled in server configuration.",
+            error="Proxy inventory alerts are disabled in server configuration.",
         )
         return
     try:
-        message_ids = send_twilio_proxy_alert(alert)
-    except SMSConfigurationError as exc:
+        message_ids = send_proxy_alert(alert)
+    except AlertConfigurationError as exc:
         ProxyInventoryAlert.objects.filter(pk=alert_id).update(
             status="config_error",
             error=str(exc)[:1000],
