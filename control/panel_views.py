@@ -237,6 +237,112 @@ def panel(request: HttpRequest) -> HttpResponse:
     )
 
 
+def _office_ip_whitelist_offices() -> list[str]:
+    """Return offices that currently have at least one active client."""
+    return list(
+        ClientAccess.objects.filter(active=True)
+        .exclude(office_name="")
+        .values_list("office_name", flat=True)
+        .distinct()
+        .order_by("office_name")
+    )
+
+
+@staff_member_required(login_url="admin:login")
+@require_GET
+def panel_office_ip_whitelist(request: HttpRequest) -> HttpResponse:
+    """Render the simple office-wide additional-IP whitelist tool."""
+    return render(
+        request,
+        "control/office_ip_whitelist.html",
+        {
+            "offices": _office_ip_whitelist_offices(),
+            "panel_url": reverse("control:panel"),
+            "api_url": reverse("control:panel-office-ip-whitelist-api"),
+        },
+    )
+
+
+@staff_member_required(login_url="admin:login")
+@require_http_methods(["GET", "POST"])
+def panel_office_ip_whitelist_api(request: HttpRequest) -> JsonResponse:
+    """Add one allowed IPv4 to every active device in a selected office.
+
+    The primary ClientAccess IPv4 remains untouched.  The submitted address is
+    stored only as an active ClientAccessIP record when it differs from that
+    device's primary address.
+    """
+    if request.method == "GET":
+        return panel_json({"ok": True, "offices": _office_ip_whitelist_offices()})
+
+    try:
+        body = json.loads(request.body.decode("utf-8") or "{}")
+    except (ValueError, UnicodeDecodeError):
+        return panel_json({"ok": False, "message": "Invalid JSON body."}, status=400)
+    if not isinstance(body, dict):
+        return panel_json({"ok": False, "message": "JSON body must be an object."}, status=400)
+
+    office = str(body.get("office") or "").strip()
+    raw_ip = str(body.get("ipv4") or "").strip()
+    if not office:
+        return panel_json({"ok": False, "message": "Choose an office."}, status=400)
+    try:
+        parsed = ipaddress.ip_address(raw_ip)
+    except ValueError:
+        return panel_json({"ok": False, "message": "Enter a valid IPv4 address."}, status=400)
+    if not isinstance(parsed, ipaddress.IPv4Address):
+        return panel_json({"ok": False, "message": "Only IPv4 addresses are supported."}, status=400)
+    normalized_ip = str(parsed)
+
+    clients = list(
+        ClientAccess.objects.filter(office_name__iexact=office, active=True)
+        .only("id", "ipv4")
+        .order_by("pk")
+    )
+    if not clients:
+        return panel_json(
+            {"ok": False, "message": "No active devices exist in that office."},
+            status=404,
+        )
+
+    created = reactivated = primary_skipped = existing_skipped = 0
+    with transaction.atomic():
+        for client in clients:
+            if normalized_ip == str(client.ipv4):
+                primary_skipped += 1
+                continue
+            entry, was_created = ClientAccessIP.objects.get_or_create(
+                client=client,
+                ipv4=normalized_ip,
+                defaults={"active": True},
+            )
+            if was_created:
+                created += 1
+            elif not entry.active:
+                entry.active = True
+                entry.save(update_fields=("active",))
+                reactivated += 1
+            else:
+                existing_skipped += 1
+
+    result = {
+        "office": office,
+        "ipv4": normalized_ip,
+        "devices": len(clients),
+        "created": created,
+        "reactivated": reactivated,
+        "primary_ip_skipped": primary_skipped,
+        "existing_additional_skipped": existing_skipped,
+    }
+    return panel_json(
+        {
+            "ok": True,
+            "message": f"{normalized_ip} is allowed for {office}.",
+            "result": result,
+        }
+    )
+
+
 def _panel_datetime_bound(value: Any):
     parsed = parse_datetime(str(value or "").strip())
     if parsed is None:

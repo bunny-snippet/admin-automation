@@ -1309,3 +1309,85 @@ class StaffPanelTests(TestCase):
         payload = response.json()
         self.assertEqual(payload["metrics"]["visits"], 3)
         self.assertEqual(payload["rows"][0]["domain"], "www.example.com")
+
+    def test_office_ip_whitelist_page_and_api_add_only_additional_addresses(self):
+        second = ClientAccess.objects.create(
+            name="North device 2",
+            ipv4="203.0.113.41",
+            device_id="device-panel-two",
+            office_name="North",
+            system_number="2",
+            config_bundle=self.bundle,
+        )
+        primary_match = ClientAccess.objects.create(
+            name="North device 3",
+            ipv4="198.51.100.90",
+            device_id="device-panel-three",
+            office_name="North",
+            system_number="3",
+            config_bundle=self.bundle,
+        )
+        inactive = ClientAccess.objects.create(
+            name="North inactive",
+            ipv4="203.0.113.42",
+            device_id="device-panel-inactive",
+            office_name="North",
+            system_number="4",
+            config_bundle=self.bundle,
+            active=False,
+        )
+        ClientAccessIP.objects.create(
+            client=self.client_access,
+            ipv4="198.51.100.90",
+            active=False,
+        )
+        self.login()
+
+        page = self.client.get(reverse("control:panel-office-ip-whitelist"))
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "Office IP whitelist")
+        self.assertContains(page, "North")
+
+        response = self.client.post(
+            reverse("control:panel-office-ip-whitelist-api"),
+            data=json.dumps({"office": "north", "ipv4": "198.51.100.90"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        result = response.json()["result"]
+        self.assertEqual(result["devices"], 3)
+        self.assertEqual(result["created"], 1)
+        self.assertEqual(result["reactivated"], 1)
+        self.assertEqual(result["primary_ip_skipped"], 1)
+        self.assertEqual(result["existing_additional_skipped"], 0)
+        self.assertEqual(str(self.client_access.ipv4), "203.0.113.40")
+        self.assertTrue(
+            ClientAccessIP.objects.filter(
+                client=self.client_access, ipv4="198.51.100.90", active=True
+            ).exists()
+        )
+        self.assertTrue(
+            ClientAccessIP.objects.filter(
+                client=second, ipv4="198.51.100.90", active=True
+            ).exists()
+        )
+        self.assertFalse(
+            ClientAccessIP.objects.filter(
+                client=primary_match, ipv4="198.51.100.90"
+            ).exists()
+        )
+        self.assertFalse(
+            ClientAccessIP.objects.filter(
+                client=inactive, ipv4="198.51.100.90"
+            ).exists()
+        )
+
+    def test_office_ip_whitelist_api_rejects_invalid_ip(self):
+        self.login()
+        response = self.client.post(
+            reverse("control:panel-office-ip-whitelist-api"),
+            data=json.dumps({"office": "North", "ipv4": "not-an-ip"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.json()["ok"])
