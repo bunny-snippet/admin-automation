@@ -929,6 +929,9 @@ class ProxyPoolTaskTests(TestCase):
         self.assertEqual(refill_proxy_pool.run(target.pk), 5)
         self.assertEqual(target.entries.filter(state="available").count(), 5)
 
+    def test_refill_ignores_a_stale_message_for_a_deleted_target(self):
+        self.assertEqual(refill_proxy_pool.run(999999999), 0)
+
     def test_only_one_outstanding_refill_is_queued_per_target(self):
         target = ProxyPoolTarget.objects.create(
             config_bundle=self.bundle,

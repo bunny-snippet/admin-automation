@@ -304,7 +304,10 @@ def refill_proxy_pool(self, target_id: int) -> int:
             )
             _mark_target_jobs_failed(target, exc)
         except ProxyPoolTarget.DoesNotExist:
-            pass
+            # A pool target can be deleted after a refill has already been
+            # published to Redis.  That stale message has no remaining work
+            # to perform, and must not be retried or logged as a worker error.
+            return 0
         raise
     finally:
         ProxyPoolTarget.objects.filter(pk=target_id).update(
