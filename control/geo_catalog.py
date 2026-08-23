@@ -12,12 +12,13 @@ import pycountry
 from .models import ConfigBundle, Provider, ProxyCountryFile, ProxyRegionCatalog
 
 
-DYNAMIC_PROVIDER_CODES = ("P1", "P2", "P3")
-REGION_PROVIDER_CODES = ("P1", "P2")
+DYNAMIC_PROVIDER_CODES = ("P1", "P2", "P3", "P4")
+REGION_PROVIDER_CODES = ("P1", "P2", "P4")
 PROVIDER_DEFAULTS = {
     "P1": {"display_name": "P1", "display_order": 1},
     "P2": {"display_name": "P2", "display_order": 2},
     "P3": {"display_name": "P3", "display_order": 3},
+    "P4": {"display_name": "P4", "display_order": 4},
 }
 
 
@@ -39,7 +40,7 @@ def country_rows() -> list[tuple[str, str]]:
 
 
 def ensure_global_country_catalog() -> int:
-    """Ensure every ISO country is visible for P1, P2 and P3."""
+    """Ensure every ISO country is visible for every dynamic provider."""
     providers: dict[str, Provider] = {}
     for code in DYNAMIC_PROVIDER_CODES:
         defaults = PROVIDER_DEFAULTS[code]
@@ -47,9 +48,17 @@ def ensure_global_country_catalog() -> int:
             code=code,
             defaults={**defaults, "active": True},
         )
+        update_fields: list[str] = []
         if not provider.active:
             provider.active = True
-            provider.save(update_fields=("active",))
+            update_fields.append("active")
+        # P4 remains the stable app-facing label even though its backend
+        # connection can be changed by configuration.
+        if code == "P4" and provider.display_name != "P4":
+            provider.display_name = "P4"
+            update_fields.append("display_name")
+        if update_fields:
+            provider.save(update_fields=update_fields)
         providers[code] = provider
 
     countries = country_rows()
@@ -113,6 +122,62 @@ def ensure_p1_region_catalog() -> int:
         ignore_conflicts=True,
     )
     return len(missing)
+
+
+def _p4_region_code(name: str) -> str:
+    """P4 accepts a normalized human-readable state in its proxy username."""
+    value = "_".join(str(name or "").strip().lower().split())
+    return "".join(char for char in value if char.isalnum() or char in {"_", "-"})
+
+
+def ensure_p4_region_catalog() -> int:
+    """Seed P4's state dropdown from ISO-3166-2; P4 deliberately has no cities."""
+    provider = Provider.objects.get(code="P4")
+    current = {
+        (row.country_code, row.region_code): row
+        for row in ProxyRegionCatalog.objects.filter(provider=provider)
+    }
+    new_rows: list[ProxyRegionCatalog] = []
+    changed_rows: list[ProxyRegionCatalog] = []
+    for item in pycountry.subdivisions:
+        country_code = str(item.country_code).upper()
+        region_name = str(item.name)
+        region_code = _p4_region_code(region_name)
+        if not country_code or not region_code:
+            continue
+        row = current.get((country_code, region_code))
+        if row is None:
+            new_rows.append(
+                ProxyRegionCatalog(
+                    provider=provider,
+                    country_code=country_code,
+                    region_code=region_code,
+                    region_name=region_name,
+                    source="iso3166-2-name",
+                    active=True,
+                )
+            )
+        elif (
+            row.region_name != region_name
+            or row.source != "iso3166-2-name"
+            or not row.active
+        ):
+            row.region_name = region_name
+            row.source = "iso3166-2-name"
+            row.active = True
+            changed_rows.append(row)
+    ProxyRegionCatalog.objects.bulk_create(
+        new_rows,
+        batch_size=500,
+        ignore_conflicts=True,
+    )
+    if changed_rows:
+        ProxyRegionCatalog.objects.bulk_update(
+            changed_rows,
+            ("region_name", "source", "active"),
+            batch_size=500,
+        )
+    return len(new_rows) + len(changed_rows)
 
 
 def _flatten_dicts(value: Any) -> Iterable[dict[str, Any]]:
@@ -239,10 +304,12 @@ def sync_p2_live_regions() -> tuple[int, int]:
 def sync_provider_geography() -> dict[str, int]:
     countries_created = ensure_global_country_catalog()
     p1_regions_created = ensure_p1_region_catalog()
+    p4_regions_created = ensure_p4_region_catalog()
     p2_countries_seen, p2_regions_synced = sync_p2_live_regions()
     return {
         "countries_created": countries_created,
         "p1_regions_created": p1_regions_created,
+        "p4_regions_created": p4_regions_created,
         "p2_countries_seen": p2_countries_seen,
         "p2_regions_synced": p2_regions_synced,
     }

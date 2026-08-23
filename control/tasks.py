@@ -32,7 +32,7 @@ from .proxy_jobs import fulfill_waiting_jobs, get_or_create_pool_target, proxy_f
 
 DEFAULT_POOL_TARGET = 1000
 DEFAULT_POOL_THRESHOLD = 200
-SUPPORTED_DYNAMIC_PROVIDERS = frozenset({"P1", "P2", "P3"})
+SUPPORTED_DYNAMIC_PROVIDERS = frozenset({"P1", "P2", "P3", "P4"})
 logger = logging.getLogger(__name__)
 
 
@@ -51,6 +51,20 @@ def _session() -> str:
 def _protocol(config: dict, provider: str, default: str = "http") -> str:
     value = _value(config, f"{provider}_PROTOCOL").casefold()
     return value if value in {"http", "https", "socks5"} else default
+
+
+def _bounded_int(value: str, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+    return max(minimum, min(maximum, parsed))
+
+
+def _p4_location_segment(value: str) -> str:
+    """Format a country/state component for the P4 proxy username."""
+    normalized = re.sub(r"\s+", "_", str(value or "").strip().lower())
+    return re.sub(r"[^a-z0-9_-]", "", normalized)
 
 
 def _proxy_url(protocol: str, host: str, port: int, username: str, password: str) -> str:
@@ -76,6 +90,13 @@ def provider_is_configured(provider: str, config: dict) -> bool:
         return all((
             _value(config, "MASSIVE_PROXY_USERNAME", "P3_PROXY_USERNAME"),
             _value(config, "MASSIVE_API_KEY", "P3_API_KEY"),
+        ))
+    if provider == "P4":
+        return all((
+            _value(config, "P4_PROXY_HOST", "P4_HOST"),
+            _value(config, "P4_PROXY_PORT", "P4_PORT"),
+            _value(config, "P4_PROXY_USERNAME", "P4_USERNAME"),
+            _value(config, "P4_PROXY_PASSWORD", "P4_PASSWORD"),
         ))
     return False
 
@@ -137,6 +158,31 @@ def _generate(
             result.append(
                 _proxy_url(protocol, "network.joinmassive.com", 65534, user, password)
             )
+    elif provider == "P4":
+        host = _value(config, "P4_PROXY_HOST", "P4_HOST")
+        raw_port = _value(config, "P4_PROXY_PORT", "P4_PORT")
+        username = _value(config, "P4_PROXY_USERNAME", "P4_USERNAME")
+        password = _value(config, "P4_PROXY_PASSWORD", "P4_PASSWORD")
+        if not all((host, raw_port, username, password)):
+            raise ValueError("P4 credentials are unavailable")
+        port = _bounded_int(raw_port, default=0, minimum=1, maximum=65535)
+        if not port:
+            raise ValueError("P4 proxy port is invalid")
+        protocol = _protocol(config, provider)
+        sticky_minutes = _bounded_int(
+            _value(config, "P4_STICKY_MINUTES"),
+            default=60,
+            minimum=1,
+            maximum=120,
+        )
+        country_segment = _p4_location_segment(country)
+        region_segment = _p4_location_segment(region)
+        for _index in range(count):
+            user = f"{username}-country-{country_segment}"
+            if region_segment:
+                user += f"-st-{region_segment}"
+            user += f"-sst-{sticky_minutes}-ssid-{_session()}"
+            result.append(_proxy_url(protocol, host, port, user, password))
     else:
         raise ValueError("Dynamic generation is not configured for this provider")
     return result

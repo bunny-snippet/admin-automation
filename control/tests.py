@@ -5,6 +5,7 @@ import json
 import zipfile
 from datetime import timedelta
 from unittest import mock
+from urllib.parse import unquote, urlsplit
 
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
@@ -14,14 +15,16 @@ from django.urls import reverse
 from django.utils import timezone
 
 from .admin import import_catalog_zip
+from .geo_catalog import ensure_global_country_catalog, ensure_p4_region_catalog
 from .models import (
     BootstrapAudit, ClientAccess, ClientAccessIP, ConfigBundle, ExtensionPackage, ProfileDomainActivity,
     MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyInventoryAlert, ProxyPoolTarget,
-    ProxyReservation, ProfileCreateLease, ProfileCreateQueue,
+    ProxyReservation, ProfileCreateLease, ProfileCreateQueue, ProxyRegionCatalog,
 )
 from .proxy_jobs import reserve_pool_proxies
 from .tasks import (
-    _generate, ensure_pool_targets, queue_refill_proxy_pool, refill_proxy_pool,
+    _generate, ensure_pool_targets, provider_is_configured, queue_refill_proxy_pool,
+    refill_proxy_pool,
 )
 
 
@@ -884,6 +887,45 @@ class ProxyPoolTaskTests(TestCase):
         self.assertIn("_c_US_s_", lines[0])
         self.assertTrue(lines[0].endswith("@pool.infatica.io:10000"))
         self.assertTrue(lines[1].endswith("@pool.infatica.io:10001"))
+
+    def test_p4_generation_uses_configured_endpoint_and_sticky_state_session(self):
+        config = {
+            "P4_PROXY_HOST": "proxy.example.test",
+            "P4_PROXY_PORT": "17521",
+            "P4_PROXY_USERNAME": "office_subuser",
+            "P4_PROXY_PASSWORD": "proxy-password",
+            "P4_STICKY_MINUTES": "60",
+        }
+
+        self.assertTrue(provider_is_configured("P4", config))
+        lines = _generate("P4", "US", "Colorado", "New York", 2, config)
+
+        self.assertEqual(len(lines), 2)
+        first = urlsplit(lines[0])
+        second = urlsplit(lines[1])
+        self.assertEqual(first.scheme, "http")
+        self.assertEqual(first.hostname, "proxy.example.test")
+        self.assertEqual(first.port, 17521)
+        self.assertNotEqual(unquote(first.username), unquote(second.username))
+        self.assertNotEqual(lines[0], lines[1])
+        self.assertTrue(
+            unquote(first.username).startswith(
+                "office_subuser-country-us-st-colorado-sst-60-ssid-"
+            )
+        )
+        self.assertNotIn("-city-", unquote(first.username))
+
+    def test_p4_catalog_exposes_countries_and_states_without_city_data(self):
+        ensure_global_country_catalog()
+        ensure_p4_region_catalog()
+
+        self.assertTrue(
+            ProxyCountryFile.objects.filter(provider__code="P4", country_code="US").exists()
+        )
+        region = ProxyRegionCatalog.objects.get(
+            provider__code="P4", country_code="US", region_code="colorado"
+        )
+        self.assertEqual(region.region_name, "Colorado")
 
     def test_refill_fills_target_and_progressively_completes_waiting_job(self):
         target = ProxyPoolTarget.objects.create(

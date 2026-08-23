@@ -167,7 +167,7 @@ def _catalog() -> list[dict[str, Any]]:
         if not country_files:
             continue
         regions_by_country: dict[str, list[dict[str, str]]] = {}
-        if provider.code in {"P1", "P2"}:
+        if provider.code in {"P1", "P2", "P4"}:
             for region in provider.region_catalog.all():
                 regions_by_country.setdefault(region.country_code, []).append(
                     {
