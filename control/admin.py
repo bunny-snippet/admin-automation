@@ -20,7 +20,7 @@ from django.urls import path, reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
-from .models import (BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyInventoryAlert, OfficeAuditRequest, ProxyReservation, ProfileActivity, OfficeProfileAudit, ProfileDomainActivity, OfficeAuditDomain, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry, ProxyRegionCatalog, SubAdminAccount, SubAdminDomainExclusion, SubAdminScopeExclusion, ClientAccessIP)
+from .models import (BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyInventoryAlert, OfficeAuditRequest, ProxyReservation, ProfileActivity, OfficeProfileAudit, ProfileDomainActivity, OfficeAuditDomain, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry, ProxyRegionCatalog, SubAdminAccount, SubAdminDomainExclusion, SubAdminScopeExclusion, ClientAccessIP, YSBridgeAgent, YSBridgeCommand)
 from .tasks import queue_refill_proxy_pool
 
 
@@ -1164,3 +1164,46 @@ class MonitoredDomainAdmin(admin.ModelAdmin):
         if not obj.created_by_id:
             obj.created_by = request.user
         super().save_model(request, obj, form, change)
+
+
+@admin.register(YSBridgeAgent)
+class YSBridgeAgentAdmin(admin.ModelAdmin):
+    list_display = ("name", "active", "version", "last_ip", "last_seen_at", "updated_at")
+    list_filter = ("active",)
+    search_fields = ("name", "last_ip", "token_hint")
+    readonly_fields = (
+        "token_hash",
+        "token_hint",
+        "version",
+        "last_ip",
+        "last_seen_at",
+        "created_at",
+        "updated_at",
+    )
+
+
+@admin.register(YSBridgeCommand)
+class YSBridgeCommandAdmin(admin.ModelAdmin):
+    list_display = ("action", "office_name", "agent", "status", "requested_by", "requested_at", "completed_at")
+    list_filter = ("status", "action", "agent")
+    search_fields = ("office_name", "id", "error", "requested_by__username")
+    readonly_fields = (
+        "id",
+        "agent",
+        "action",
+        "office_name",
+        "payload",
+        "status",
+        "requested_by",
+        "result",
+        "error",
+        "requested_at",
+        "claimed_at",
+        "completed_at",
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False

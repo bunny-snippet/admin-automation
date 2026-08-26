@@ -187,3 +187,26 @@ tokens bind that reported IPv4 to the exact `ClientAccess.device_id`. The app
 sends the same value as `X-Client-IPv4` on token-protected catalog downloads.
 The Railway `100.64.0.0/10` transport address remains available in audits but
 is not used for the whitelist lookup in this explicitly approved mode.
+# Mobile Quick Ops and YSBrowser bridge
+
+Super-admins can open `/panel/mobile-ops/` from a phone to generate an office's
+proxy inventory, add one IPv4 to every active office device, delete office
+YSBrowser environments, and add/remove YSBrowser whitelist IPs.
+
+The YSBrowser API listens on the office PC only. Provision its outbound HTTPS
+bridge once on the server:
+
+```bash
+./.venv/bin/python manage.py provision_ys_bridge --name "Primary office PC"
+```
+
+Copy the one-time token, place `tools/Setup-YSBridge.ps1` and
+`tools/YSBridgeAgent.ps1` together on that Windows PC, then run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Setup-YSBridge.ps1
+```
+
+The setup prompts securely for the bridge token and YSBrowser API key, stores
+both with Windows DPAPI, starts the bridge, and adds a per-user Startup shortcut.
+No inbound firewall port or YSBrowser API key in the web browser is required.

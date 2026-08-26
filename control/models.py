@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
+import uuid
 from typing import Any
 
 from django.conf import settings
@@ -121,6 +123,95 @@ class ClientAccessIP(models.Model):
 
     def __str__(self) -> str:
         return f"{self.client} / {self.ipv4}"
+
+
+class YSBridgeAgent(models.Model):
+    """A trusted Windows agent that can reach the local YSBrowser API."""
+
+    name = models.CharField(max_length=120, unique=True)
+    token_hash = models.CharField(max_length=64, unique=True, editable=False)
+    token_hint = models.CharField(max_length=16, blank=True, editable=False)
+    active = models.BooleanField(default=True)
+    version = models.CharField(max_length=40, blank=True, default="")
+    last_ip = models.GenericIPAddressField(blank=True, null=True)
+    last_seen_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("name",)
+
+    @staticmethod
+    def hash_token(raw_token: str) -> str:
+        return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+    def set_token(self, raw_token: str) -> None:
+        self.token_hash = self.hash_token(raw_token)
+        self.token_hint = raw_token[:12]
+
+    def check_token(self, raw_token: str) -> bool:
+        return hmac.compare_digest(self.token_hash, self.hash_token(raw_token))
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class YSBridgeCommand(models.Model):
+    ACTION_DELETE_ENVIRONMENTS = "delete_environments"
+    ACTION_WHITELIST_ADD = "whitelist_add"
+    ACTION_WHITELIST_REMOVE = "whitelist_remove"
+    ACTION_CHOICES = (
+        (ACTION_DELETE_ENVIRONMENTS, "Delete YSBrowser environments"),
+        (ACTION_WHITELIST_ADD, "Add YSBrowser whitelist IP"),
+        (ACTION_WHITELIST_REMOVE, "Remove YSBrowser whitelist IP"),
+    )
+    STATUS_QUEUED = "queued"
+    STATUS_RUNNING = "running"
+    STATUS_SUCCEEDED = "succeeded"
+    STATUS_FAILED = "failed"
+    STATUS_CANCELLED = "cancelled"
+    STATUS_CHOICES = (
+        (STATUS_QUEUED, "Queued"),
+        (STATUS_RUNNING, "Running"),
+        (STATUS_SUCCEEDED, "Succeeded"),
+        (STATUS_FAILED, "Failed"),
+        (STATUS_CANCELLED, "Cancelled"),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    agent = models.ForeignKey(
+        YSBridgeAgent,
+        on_delete=models.PROTECT,
+        related_name="commands",
+    )
+    action = models.CharField(max_length=40, choices=ACTION_CHOICES)
+    office_name = models.CharField(max_length=160, blank=True, default="")
+    payload = models.JSONField(default=dict, blank=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_QUEUED)
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="ys_bridge_commands",
+    )
+    result = models.JSONField(default=dict, blank=True)
+    error = models.TextField(blank=True, default="")
+    requested_at = models.DateTimeField(auto_now_add=True)
+    claimed_at = models.DateTimeField(blank=True, null=True)
+    completed_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        ordering = ("-requested_at",)
+        indexes = [
+            models.Index(
+                fields=("agent", "status", "requested_at"),
+                name="ysbridge_claim_idx",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.action} / {self.office_name or 'global'} / {self.status}"
 
 class Provider(models.Model):
     code = models.CharField(max_length=32, unique=True, validators=[catalog_id_validator])
