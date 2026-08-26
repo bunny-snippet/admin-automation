@@ -1,19 +1,36 @@
 param(
     [string]$ConfigPath = "$env:LOCALAPPDATA\WarriorYSBridge\config.json",
+    [string]$LogPath = "$env:LOCALAPPDATA\WarriorYSBridge\bridge.log",
     [switch]$Once
 )
 
 $ErrorActionPreference = "Stop"
 $BridgeVersion = "1.0.0"
+$runContinuously = -not $Once.IsPresent
+function Write-BridgeLog([string]$Message) {
+    try { Add-Content -LiteralPath $LogPath -Value "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $Message" -Encoding UTF8 }
+    catch { }
+}
 $createdNew = $false
 $singleInstance = [Threading.Mutex]::new($true, "Local\WarriorYSBridgeAgent", [ref]$createdNew)
-if (-not $createdNew) { exit 0 }
+if (-not $createdNew) { Write-BridgeLog "Bridge already running; duplicate process exited."; exit 0 }
+Write-BridgeLog "Bridge v$BridgeVersion started (PID=$PID, continuous=$runContinuously)."
 
 function Unprotect-Value([string]$EncryptedValue) {
-    $secure = ConvertTo-SecureString $EncryptedValue
-    $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-    try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer) }
-    finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
+    if (-not $EncryptedValue -or $EncryptedValue.Length % 2 -ne 0 -or $EncryptedValue -notmatch '^[0-9a-fA-F]+$') {
+        throw "Encrypted configuration value has an invalid format."
+    }
+    $cipherBytes = New-Object byte[] ($EncryptedValue.Length / 2)
+    for ($index = 0; $index -lt $cipherBytes.Length; $index++) {
+        $cipherBytes[$index] = [Convert]::ToByte($EncryptedValue.Substring($index * 2, 2), 16)
+    }
+    [void][Reflection.Assembly]::LoadWithPartialName("System.Security")
+    $plainBytes = [System.Security.Cryptography.ProtectedData]::Unprotect(
+        $cipherBytes,
+        $null,
+        [System.Security.Cryptography.DataProtectionScope]::CurrentUser
+    )
+    return [Text.Encoding]::Unicode.GetString($plainBytes)
 }
 
 function Invoke-JsonRequest {
@@ -49,13 +66,20 @@ function Get-ResponseRows($Response) {
 }
 
 if (-not (Test-Path -LiteralPath $ConfigPath)) {
+    Write-BridgeLog "Configuration file is missing at the expected per-user path."
     throw "Bridge config not found. Run Setup-YSBridge.ps1 first."
 }
-$config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
-$serverUrl = "$($config.server_url)".TrimEnd("/")
-$ysBaseUrl = "$($config.ys_base_url)".TrimEnd("/")
-$agentToken = Unprotect-Value "$($config.agent_token)"
-$ysApiKey = Unprotect-Value "$($config.ys_api_key)"
+try {
+    $config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+    $serverUrl = "$($config.server_url)".TrimEnd("/")
+    $ysBaseUrl = "$($config.ys_base_url)".TrimEnd("/")
+    $agentToken = Unprotect-Value "$($config.agent_token)"
+    $ysApiKey = Unprotect-Value "$($config.ys_api_key)"
+    Write-BridgeLog "Per-user configuration decrypted."
+} catch {
+    Write-BridgeLog "Configuration could not be loaded: $($_.Exception.GetType().Name): $($_.Exception.Message)"
+    throw
+}
 $bridgeHeaders = @{ Authorization = "Bearer $agentToken"; "X-Bridge-Version" = $BridgeVersion }
 $ysHeaders = @{ "X-API-Key" = $ysApiKey }
 
@@ -165,10 +189,13 @@ function Invoke-BridgeCommand($Command) {
     }
 }
 
+$announcedOnline = $false
 do {
     try {
         $poll = Invoke-JsonRequest -Url "$serverUrl/api/v1/ys-bridge/poll/" -Method "POST" -Headers $bridgeHeaders -Body @{}
+        if (-not $announcedOnline) { Write-BridgeLog "Server connection authenticated."; $announcedOnline = $true }
         if ($null -ne $poll.command) {
+            Write-BridgeLog "Executing command $($poll.command.id) ($($poll.command.action))."
             $completion = @{ success = $false; result = @{}; error = "" }
             try {
                 $completion.result = Invoke-BridgeCommand $poll.command
@@ -177,10 +204,14 @@ do {
                 $completion.error = "$($_.Exception.GetType().Name): $($_.Exception.Message)"
             }
             [void](Invoke-JsonRequest -Url "$serverUrl/api/v1/ys-bridge/commands/$($poll.command.id)/complete/" -Method "POST" -Headers $bridgeHeaders -Body $completion)
+            Write-BridgeLog "Command $($poll.command.id) reported (success=$($completion.success))."
         }
     } catch {
         if ($Once) { throw }
+        Write-BridgeLog "Poll failed: $($_.Exception.GetType().Name): $($_.Exception.Message)"
+        $announcedOnline = $false
         Start-Sleep -Seconds 10
     }
-    if (-not $Once) { Start-Sleep -Seconds 4 }
-} while (-not $Once)
+    if ($runContinuously) { Start-Sleep -Seconds 4 }
+} while ($runContinuously)
+Write-BridgeLog "Bridge stopped."
