@@ -73,6 +73,11 @@ urlpatterns = [
     path("api/v1/proxy-jobs/", views.create_proxy_job, name="proxy-job-create"),
     path("api/v1/proxy-jobs/<int:job_id>/", views.proxy_job_detail, name="proxy-job-detail"),
     path(
+        "api/v1/proxy-cities/<str:provider_code>/<str:country_code>/",
+        views.proxy_cities,
+        name="proxy-cities-country",
+    ),
+    path(
         "api/v1/proxy-cities/<str:provider_code>/<str:country_code>/<str:region_code>/",
         views.proxy_cities,
         name="proxy-cities",
