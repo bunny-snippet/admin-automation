@@ -247,18 +247,27 @@ class Command(BaseCommand):
         needs_fill = [
             target
             for target in targets
-            if int(target.available_count or 0) < target.target_count
+            if int(target.available_count or 0)
+            < max(1, target.replenish_below)
         ]
         batch_size = _bounded(options["batch_size"])
         timeout = _bounded(options["batch_timeout"], minimum=30)
         self.stdout.write(
-            f"Targets needing fill: {len(needs_fill)}; batch size: {batch_size}"
+            f"Targets needing ready inventory: {len(needs_fill)}; "
+            f"batch size: {batch_size}"
         )
         failures: list[int] = []
         for offset in range(0, len(needs_fill), batch_size):
             batch = needs_fill[offset : offset + batch_size]
             batch_ids = [target.pk for target in batch]
-            expected_counts = {target.pk: target.target_count for target in batch}
+            # A refill task itself fills the target to target_count.  Only wait
+            # for the ready threshold here: an active office can reserve one
+            # entry immediately after refill, and that must not stall the whole
+            # prefill run while substantial ready inventory still remains.
+            expected_counts = {
+                target.pk: max(1, target.replenish_below)
+                for target in batch
+            }
             for target_id in batch_ids:
                 queue_refill_proxy_pool(target_id)
             deadline = time.monotonic() + timeout
