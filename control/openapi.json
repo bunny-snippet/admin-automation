@@ -170,6 +170,65 @@
         }
       }
     },
+    "/api/v1/proxy-cities/{provider_code}/{country_code}/{region_code}/": {
+      "get": {
+        "summary": "List ready pre-generated cities for a P2 state",
+        "operationId": "getReadyProxyCities",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "provider_code",
+            "in": "path",
+            "required": true,
+            "schema": {"type": "string", "example": "P2"}
+          },
+          {
+            "name": "country_code",
+            "in": "path",
+            "required": true,
+            "schema": {"type": "string", "example": "US"}
+          },
+          {
+            "name": "region_code",
+            "in": "path",
+            "required": true,
+            "description": "Numeric P2 subdivision ID returned by bootstrap",
+            "schema": {"type": "string", "example": "1906"}
+          },
+          {
+            "name": "X-Device-ID",
+            "in": "header",
+            "required": true,
+            "schema": {"type": "string"}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cities with at least one ready exact proxy session",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["allowed", "cities"],
+                  "properties": {
+                    "allowed": {"type": "boolean"},
+                    "cities": {
+                      "type": "array",
+                      "items": {"type": "string"}
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {"$ref": "#/components/responses/Forbidden"}
+        }
+      }
+    },
     "/api/v1/proxies/{provider_code}/{country_code}/": {
       "get": {
         "summary": "Download a provider/country proxy TXT catalog",

@@ -24,7 +24,7 @@ from .admin import DesktopReleaseForm, import_catalog_zip
 from .geo_catalog import ensure_global_country_catalog, ensure_p4_region_catalog
 from .models import (
     BootstrapAudit, ClientAccess, ClientAccessIP, ConfigBundle, DesktopRelease, ExtensionPackage, ProfileDomainActivity,
-    MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyInventoryAlert, ProxyPoolTarget,
+    MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyInventoryAlert, ProxyPoolEntry, ProxyPoolTarget,
     ProxyReservation, ProfileCreateLease, ProfileCreateQueue, ProxyRegionCatalog,
 )
 from .release_updates import canonical_release_payload, verify_release_signature
@@ -472,6 +472,148 @@ class ControlApiTests(TestCase):
         self.assertEqual(job["ready_count"], 5)
         self.assertEqual(len(job["proxies"]), 5)
         self.assertEqual(job["status"], "ready")
+
+    def test_p2_proxy_job_preserves_state_and_city(self):
+        payload = self.bundle.get_payload()
+        payload.update({
+            "P2_API_USERNAME": "proxy-user",
+            "P2_API_PASSWORD": "proxy-password",
+            "P2_PROTOCOL": "socks5",
+        })
+        self.bundle.set_payload(payload)
+        self.bundle.save()
+        p2 = Provider.objects.create(code="P2", display_name="P2", display_order=2)
+        ProxyCountryFile.objects.create(
+            provider=p2,
+            country_code="US",
+            country_name="United States",
+        )
+        ProxyRegionCatalog.objects.create(
+            provider=p2,
+            country_code="US",
+            region_code="1906",
+            region_name="New York",
+        )
+        ProxyPoolTarget.objects.create(
+            config_bundle=self.bundle,
+            provider_code="P2",
+            country_code="US",
+            region="1906",
+            city="New York",
+            target_count=10,
+            replenish_below=2,
+        )
+        token = self.bootstrap().json()["access_token"]
+
+        response = self.client.post(
+            reverse("control:proxy-job-create"),
+            data=json.dumps({
+                "provider": "P2",
+                "country": "US",
+                "region": "1906",
+                "city": "New York",
+                "count": 1,
+                "candidate_count": 2,
+            }),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+            HTTP_X_DEVICE_ID="device-one",
+            REMOTE_ADDR="203.0.113.10",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        job = response.json()["job"]
+        self.assertEqual(job["status"], "failed")
+        stored = ProxyGenerationJob.objects.get(pk=job["id"])
+        self.assertEqual(stored.region, "1906")
+        self.assertEqual(stored.city, "New York")
+
+    def test_p2_proxy_job_rejects_city_without_state(self):
+        token = self.bootstrap().json()["access_token"]
+        response = self.client.post(
+            reverse("control:proxy-job-create"),
+            data=json.dumps({
+                "provider": "P2",
+                "country": "US",
+                "city": "New York",
+                "count": 1,
+            }),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+            HTTP_X_DEVICE_ID="device-one",
+            REMOTE_ADDR="203.0.113.10",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(response.json()["allowed"])
+
+    def test_p2_proxy_job_rejects_city_outside_prefilled_catalog(self):
+        p2 = Provider.objects.create(code="P2", display_name="P2", display_order=2)
+        ProxyRegionCatalog.objects.create(
+            provider=p2,
+            country_code="US",
+            region_code="1906",
+            region_name="New York",
+        )
+        token = self.bootstrap().json()["access_token"]
+        response = self.client.post(
+            reverse("control:proxy-job-create"),
+            data=json.dumps({
+                "provider": "P2",
+                "country": "US",
+                "region": "1906",
+                "city": "New York_city_Injected",
+                "count": 1,
+            }),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+            HTTP_X_DEVICE_ID="device-one",
+            REMOTE_ADDR="203.0.113.10",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(response.json()["allowed"])
+
+    def test_p2_city_catalog_returns_only_pre_generated_ready_cities(self):
+        p2 = Provider.objects.create(code="P2", display_name="P2", display_order=2)
+        ProxyRegionCatalog.objects.create(
+            provider=p2,
+            country_code="US",
+            region_code="1906",
+            region_name="New York",
+        )
+        ready = ProxyPoolTarget.objects.create(
+            config_bundle=self.bundle,
+            provider_code="P2",
+            country_code="US",
+            region="1906",
+            city="New York",
+            target_count=10,
+            replenish_below=2,
+        )
+        ProxyPoolTarget.objects.create(
+            config_bundle=self.bundle,
+            provider_code="P2",
+            country_code="US",
+            region="1906",
+            city="Albany",
+            target_count=10,
+            replenish_below=2,
+        )
+        entry = ProxyPoolEntry(target=ready, proxy_fingerprint="b" * 64)
+        entry.set_proxy("socks5://user:pass@example.test:10000")
+        entry.save()
+        token = self.bootstrap().json()["access_token"]
+
+        response = self.client.get(
+            reverse("control:proxy-cities", args=("P2", "US", "1906")),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+            HTTP_X_DEVICE_ID="device-one",
+            REMOTE_ADDR="203.0.113.10",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"allowed": True, "cities": ["New York"]})
 
     def test_empty_inventory_does_not_generate_and_records_alert(self):
         token = self.bootstrap().json()["access_token"]
@@ -958,6 +1100,19 @@ class ProxyPoolTaskTests(TestCase):
         self.assertIn("_c_US_s_", lines[0])
         self.assertTrue(lines[0].endswith("@pool.infatica.io:10000"))
         self.assertTrue(lines[1].endswith("@pool.infatica.io:10001"))
+
+    def test_p2_generation_keeps_numeric_state_and_city_targeting(self):
+        line = _generate(
+            "P2",
+            "US",
+            "1906",
+            "New York",
+            1,
+            self.bundle.get_payload(),
+        )[0]
+
+        username = unquote(urlsplit(line).username)
+        self.assertIn("_c_US_sd_1906_city_New-York_s_", username)
 
     def test_p4_generation_uses_configured_endpoint_and_sticky_state_session(self):
         config = {

@@ -9,10 +9,23 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db.models import Count, Q
 
 from control.models import ClientAccess, ConfigBundle, ProxyPoolTarget
+from control.prefill import fill_targets_direct
 from control.tasks import provider_is_configured, queue_refill_proxy_pool
 
 
-DEFAULT_COUNTRIES = ("DE", "ES", "CZ", "BE", "FR", "IT", "GB")
+DEFAULT_COUNTRIES = (
+    "DE",
+    "ES",
+    "CZ",
+    "BE",
+    "FR",
+    "IT",
+    "GB",
+    "DK",
+    "AU",
+    "CA",
+    "US",
+)
 COUNTRY_ALIASES = {"UK": "GB"}
 GEO_PATH = Path(__file__).resolve().parents[2] / "data" / "p3_prefill_geo.json"
 
@@ -45,6 +58,11 @@ class Command(BaseCommand):
         parser.add_argument("--city-threshold", type=int, default=2)
         parser.add_argument("--batch-size", type=int, default=100)
         parser.add_argument("--batch-timeout", type=int, default=900)
+        parser.add_argument(
+            "--direct-fill",
+            action="store_true",
+            help="Fill in batched DB writes instead of publishing one Celery task per target.",
+        )
         parser.add_argument("--status-only", action="store_true")
 
     def handle(self, *args, **options):
@@ -156,7 +174,6 @@ class Command(BaseCommand):
                 config_bundle_id__in=[bundle.pk for bundle in configured],
                 provider_code="P3",
                 country_code__in=countries,
-                active=True,
             ).annotate(
                 available_count=Count(
                     "entries", filter=Q(entries__state="available")
@@ -170,7 +187,11 @@ class Command(BaseCommand):
         ]
 
         if options["status_only"]:
-            self._status(configured, specs, selected)
+            self._status(
+                configured,
+                specs,
+                [target for target in selected if target.active],
+            )
             return
 
         existing = {
@@ -212,7 +233,6 @@ class Command(BaseCommand):
                 config_bundle_id__in=[bundle.pk for bundle in configured],
                 provider_code="P3",
                 country_code__in=countries,
-                active=True,
             ).annotate(
                 available_count=Count(
                     "entries", filter=Q(entries__state="available")
@@ -256,6 +276,21 @@ class Command(BaseCommand):
             f"Targets needing ready inventory: {len(needs_fill)}; "
             f"batch size: {batch_size}"
         )
+        if options["direct_fill"]:
+            created = fill_targets_direct(
+                needs_fill,
+                target_batch_size=batch_size,
+                progress=lambda done, total, rows: self.stdout.write(
+                    f"DIRECT_FILL progress={done}/{total} entries_created={rows}"
+                ),
+            )
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"PREFILL_DONE targets={len(targets)}/{expected} "
+                    f"entries_created={created} failures=0"
+                )
+            )
+            return
         failures: list[int] = []
         for offset in range(0, len(needs_fill), batch_size):
             batch = needs_fill[offset : offset + batch_size]
