@@ -65,6 +65,7 @@ LEGACY_P3_LOCATION_MAX_APP_VERSION = (1, 7, 33, 9999)
 P3_PREFILL_GEO_PATH = (
     Path(__file__).resolve().parent / "data" / "p3_prefill_geo.json"
 )
+EXACT_CITY_CANDIDATE_LIMIT = 40
 
 
 @lru_cache(maxsize=1)
@@ -1001,7 +1002,7 @@ def _ensure_dynamic_inventory(
     preserved; the level defaults apply only when the target is first created.
     """
     if city:
-        target_count, replenish_below = 10, 2
+        target_count, replenish_below = 40, 8
     elif region:
         target_count, replenish_below = 50, 10
     else:
@@ -1144,9 +1145,11 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
             if not city:
                 raise ValueError("Unsupported P3 city")
         if provider_code in {"P2", "P3"} and city:
+            # Profile creation stays deliberately small, while Tubelight can
+            # quality-test a wider city batch before choosing those profiles.
             if requested_count > 10:
                 raise ValueError("Exact city requests are limited to 10 profiles")
-            candidate_count = min(candidate_count, 10)
+            candidate_count = min(candidate_count, EXACT_CITY_CANDIDATE_LIMIT)
     except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError,
             signing.BadSignature, signing.SignatureExpired, ClientAccess.DoesNotExist):
         return _json_response({"allowed": False, "message": "Access denied."}, status=403)

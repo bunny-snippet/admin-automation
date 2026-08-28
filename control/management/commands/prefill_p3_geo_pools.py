@@ -54,8 +54,8 @@ class Command(BaseCommand):
         parser.add_argument("--country-threshold", type=int, default=200)
         parser.add_argument("--state-target", type=int, default=50)
         parser.add_argument("--state-threshold", type=int, default=10)
-        parser.add_argument("--city-target", type=int, default=10)
-        parser.add_argument("--city-threshold", type=int, default=2)
+        parser.add_argument("--city-target", type=int, default=40)
+        parser.add_argument("--city-threshold", type=int, default=8)
         parser.add_argument("--batch-size", type=int, default=100)
         parser.add_argument("--batch-timeout", type=int, default=900)
         parser.add_argument(
