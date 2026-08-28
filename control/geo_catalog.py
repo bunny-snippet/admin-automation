@@ -13,7 +13,7 @@ from .models import ConfigBundle, Provider, ProxyCountryFile, ProxyRegionCatalog
 
 
 DYNAMIC_PROVIDER_CODES = ("P1", "P2", "P3", "P4")
-REGION_PROVIDER_CODES = ("P1", "P2", "P4")
+REGION_PROVIDER_CODES = ("P1", "P2", "P3", "P4")
 PROVIDER_DEFAULTS = {
     "P1": {"display_name": "P1", "display_order": 1},
     "P2": {"display_name": "P2", "display_order": 2},
@@ -122,6 +122,56 @@ def ensure_p1_region_catalog() -> int:
         ignore_conflicts=True,
     )
     return len(missing)
+
+
+def ensure_p3_region_catalog() -> int:
+    """Expose ISO-3166-2 subdivisions supported by Massive/P3 targeting."""
+    provider = Provider.objects.get(code="P3")
+    current = {
+        (row.country_code, row.region_code): row
+        for row in ProxyRegionCatalog.objects.filter(provider=provider)
+    }
+    new_rows: list[ProxyRegionCatalog] = []
+    changed_rows: list[ProxyRegionCatalog] = []
+    for item in pycountry.subdivisions:
+        country_code = str(item.country_code or "").upper()
+        region_code = str(item.code or "").rsplit("-", 1)[-1]
+        region_name = str(item.name or "").strip()
+        if not country_code or not region_code or not region_name:
+            continue
+        row = current.get((country_code, region_code))
+        if row is None:
+            new_rows.append(
+                ProxyRegionCatalog(
+                    provider=provider,
+                    country_code=country_code,
+                    region_code=region_code,
+                    region_name=region_name,
+                    source="iso3166-2",
+                    active=True,
+                )
+            )
+        elif (
+            row.region_name != region_name
+            or row.source != "iso3166-2"
+            or not row.active
+        ):
+            row.region_name = region_name
+            row.source = "iso3166-2"
+            row.active = True
+            changed_rows.append(row)
+    ProxyRegionCatalog.objects.bulk_create(
+        new_rows,
+        batch_size=500,
+        ignore_conflicts=True,
+    )
+    if changed_rows:
+        ProxyRegionCatalog.objects.bulk_update(
+            changed_rows,
+            ("region_name", "source", "active"),
+            batch_size=500,
+        )
+    return len(new_rows) + len(changed_rows)
 
 
 def _p4_region_code(name: str) -> str:
@@ -304,11 +354,13 @@ def sync_p2_live_regions() -> tuple[int, int]:
 def sync_provider_geography() -> dict[str, int]:
     countries_created = ensure_global_country_catalog()
     p1_regions_created = ensure_p1_region_catalog()
+    p3_regions_created = ensure_p3_region_catalog()
     p4_regions_created = ensure_p4_region_catalog()
     p2_countries_seen, p2_regions_synced = sync_p2_live_regions()
     return {
         "countries_created": countries_created,
         "p1_regions_created": p1_regions_created,
+        "p3_regions_created": p3_regions_created,
         "p4_regions_created": p4_regions_created,
         "p2_countries_seen": p2_countries_seen,
         "p2_regions_synced": p2_regions_synced,

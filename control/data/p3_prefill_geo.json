@@ -1,0 +1,3750 @@
+{
+  "BE": {
+    "cities": [
+      "Antwerpen",
+      "Ath",
+      "Attert",
+      "Beringen",
+      "Bilzen",
+      "Brussels",
+      "Butgenbach",
+      "Charleroi",
+      "Dinant",
+      "Gent",
+      "Hensies",
+      "Kortrijk",
+      "La Louviere",
+      "Lichtervelde",
+      "Liege",
+      "Neufchateau",
+      "Perwez",
+      "Sint-Niklaas",
+      "Turnhout",
+      "Zaventem",
+      "Zeebrugge",
+      "Zele"
+    ],
+    "regions": [
+      {
+        "code": "VAN",
+        "name": "Antwerpen"
+      },
+      {
+        "code": "WBR",
+        "name": "Brabant wallon"
+      },
+      {
+        "code": "BRU",
+        "name": "Bruxelles-Capitale, Région de"
+      },
+      {
+        "code": "WHT",
+        "name": "Hainaut"
+      },
+      {
+        "code": "VLI",
+        "name": "Limburg"
+      },
+      {
+        "code": "WLG",
+        "name": "Liège"
+      },
+      {
+        "code": "WLX",
+        "name": "Luxembourg"
+      },
+      {
+        "code": "WNA",
+        "name": "Namur"
+      },
+      {
+        "code": "VOV",
+        "name": "Oost-Vlaanderen"
+      },
+      {
+        "code": "VLG",
+        "name": "Vlaams Gewest"
+      },
+      {
+        "code": "VBR",
+        "name": "Vlaams-Brabant"
+      },
+      {
+        "code": "WAL",
+        "name": "wallonne, Région"
+      },
+      {
+        "code": "VWV",
+        "name": "West-Vlaanderen"
+      }
+    ]
+  },
+  "CZ": {
+    "cities": [
+      "Jihlava",
+      "Kojetin",
+      "Korycany",
+      "Krnov",
+      "Nachod",
+      "Ostrava",
+      "Pardubice",
+      "Prague",
+      "Zlin",
+      "Zulova"
+    ],
+    "regions": [
+      {
+        "code": "201",
+        "name": "Benešov"
+      },
+      {
+        "code": "202",
+        "name": "Beroun"
+      },
+      {
+        "code": "641",
+        "name": "Blansko"
+      },
+      {
+        "code": "642",
+        "name": "Brno-město"
+      },
+      {
+        "code": "643",
+        "name": "Brno-venkov"
+      },
+      {
+        "code": "801",
+        "name": "Bruntál"
+      },
+      {
+        "code": "644",
+        "name": "Břeclav"
+      },
+      {
+        "code": "411",
+        "name": "Cheb"
+      },
+      {
+        "code": "422",
+        "name": "Chomutov"
+      },
+      {
+        "code": "531",
+        "name": "Chrudim"
+      },
+      {
+        "code": "321",
+        "name": "Domažlice"
+      },
+      {
+        "code": "421",
+        "name": "Děčín"
+      },
+      {
+        "code": "802",
+        "name": "Frýdek-Místek"
+      },
+      {
+        "code": "631",
+        "name": "Havlíčkův Brod"
+      },
+      {
+        "code": "645",
+        "name": "Hodonín"
+      },
+      {
+        "code": "521",
+        "name": "Hradec Králové"
+      },
+      {
+        "code": "512",
+        "name": "Jablonec nad Nisou"
+      },
+      {
+        "code": "711",
+        "name": "Jeseník"
+      },
+      {
+        "code": "632",
+        "name": "Jihlava"
+      },
+      {
+        "code": "64",
+        "name": "Jihomoravský kraj"
+      },
+      {
+        "code": "31",
+        "name": "Jihočeský kraj"
+      },
+      {
+        "code": "313",
+        "name": "Jindřichův Hradec"
+      },
+      {
+        "code": "522",
+        "name": "Jičín"
+      },
+      {
+        "code": "41",
+        "name": "Karlovarský kraj"
+      },
+      {
+        "code": "412",
+        "name": "Karlovy Vary"
+      },
+      {
+        "code": "803",
+        "name": "Karviná"
+      },
+      {
+        "code": "203",
+        "name": "Kladno"
+      },
+      {
+        "code": "322",
+        "name": "Klatovy"
+      },
+      {
+        "code": "204",
+        "name": "Kolín"
+      },
+      {
+        "code": "63",
+        "name": "Kraj Vysočina"
+      },
+      {
+        "code": "721",
+        "name": "Kroměříž"
+      },
+      {
+        "code": "52",
+        "name": "Královéhradecký kraj"
+      },
+      {
+        "code": "205",
+        "name": "Kutná Hora"
+      },
+      {
+        "code": "513",
+        "name": "Liberec"
+      },
+      {
+        "code": "51",
+        "name": "Liberecký kraj"
+      },
+      {
+        "code": "423",
+        "name": "Litoměřice"
+      },
+      {
+        "code": "424",
+        "name": "Louny"
+      },
+      {
+        "code": "207",
+        "name": "Mladá Boleslav"
+      },
+      {
+        "code": "80",
+        "name": "Moravskoslezský kraj"
+      },
+      {
+        "code": "425",
+        "name": "Most"
+      },
+      {
+        "code": "206",
+        "name": "Mělník"
+      },
+      {
+        "code": "804",
+        "name": "Nový Jičín"
+      },
+      {
+        "code": "208",
+        "name": "Nymburk"
+      },
+      {
+        "code": "523",
+        "name": "Náchod"
+      },
+      {
+        "code": "712",
+        "name": "Olomouc"
+      },
+      {
+        "code": "71",
+        "name": "Olomoucký kraj"
+      },
+      {
+        "code": "805",
+        "name": "Opava"
+      },
+      {
+        "code": "806",
+        "name": "Ostrava-město"
+      },
+      {
+        "code": "532",
+        "name": "Pardubice"
+      },
+      {
+        "code": "53",
+        "name": "Pardubický kraj"
+      },
+      {
+        "code": "633",
+        "name": "Pelhřimov"
+      },
+      {
+        "code": "324",
+        "name": "Plzeň-jih"
+      },
+      {
+        "code": "323",
+        "name": "Plzeň-město"
+      },
+      {
+        "code": "325",
+        "name": "Plzeň-sever"
+      },
+      {
+        "code": "32",
+        "name": "Plzeňský kraj"
+      },
+      {
+        "code": "315",
+        "name": "Prachatice"
+      },
+      {
+        "code": "10",
+        "name": "Praha, Hlavní město"
+      },
+      {
+        "code": "209",
+        "name": "Praha-východ"
+      },
+      {
+        "code": "20A",
+        "name": "Praha-západ"
+      },
+      {
+        "code": "713",
+        "name": "Prostějov"
+      },
+      {
+        "code": "314",
+        "name": "Písek"
+      },
+      {
+        "code": "714",
+        "name": "Přerov"
+      },
+      {
+        "code": "20B",
+        "name": "Příbram"
+      },
+      {
+        "code": "20C",
+        "name": "Rakovník"
+      },
+      {
+        "code": "326",
+        "name": "Rokycany"
+      },
+      {
+        "code": "524",
+        "name": "Rychnov nad Kněžnou"
+      },
+      {
+        "code": "514",
+        "name": "Semily"
+      },
+      {
+        "code": "413",
+        "name": "Sokolov"
+      },
+      {
+        "code": "316",
+        "name": "Strakonice"
+      },
+      {
+        "code": "20",
+        "name": "Středočeský kraj"
+      },
+      {
+        "code": "533",
+        "name": "Svitavy"
+      },
+      {
+        "code": "327",
+        "name": "Tachov"
+      },
+      {
+        "code": "426",
+        "name": "Teplice"
+      },
+      {
+        "code": "525",
+        "name": "Trutnov"
+      },
+      {
+        "code": "317",
+        "name": "Tábor"
+      },
+      {
+        "code": "634",
+        "name": "Třebíč"
+      },
+      {
+        "code": "722",
+        "name": "Uherské Hradiště"
+      },
+      {
+        "code": "723",
+        "name": "Vsetín"
+      },
+      {
+        "code": "646",
+        "name": "Vyškov"
+      },
+      {
+        "code": "724",
+        "name": "Zlín"
+      },
+      {
+        "code": "72",
+        "name": "Zlínský kraj"
+      },
+      {
+        "code": "647",
+        "name": "Znojmo"
+      },
+      {
+        "code": "42",
+        "name": "Ústecký kraj"
+      },
+      {
+        "code": "427",
+        "name": "Ústí nad Labem"
+      },
+      {
+        "code": "534",
+        "name": "Ústí nad Orlicí"
+      },
+      {
+        "code": "511",
+        "name": "Česká Lípa"
+      },
+      {
+        "code": "311",
+        "name": "České Budějovice"
+      },
+      {
+        "code": "312",
+        "name": "Český Krumlov"
+      },
+      {
+        "code": "715",
+        "name": "Šumperk"
+      },
+      {
+        "code": "635",
+        "name": "Žďár nad Sázavou"
+      }
+    ]
+  },
+  "DE": {
+    "cities": [
+      "Aachen",
+      "Aalen",
+      "Alberthain",
+      "Altstadt",
+      "Andrup",
+      "Augsburg-Lechviertel",
+      "Bad Kreuznach",
+      "Bad Sooden-Allendorf",
+      "Berlin",
+      "Bielefeld",
+      "Bochum",
+      "Bockingen",
+      "Bonn",
+      "Bottrop",
+      "Braunschweig",
+      "Bremersand",
+      "Briesnig",
+      "Chemnitz",
+      "Delmenhorst",
+      "Dietkirchen",
+      "Doggingen",
+      "Dortmund",
+      "Dreieich",
+      "Dresden",
+      "Duderstadt",
+      "Duisburg",
+      "Dusseldorf",
+      "Eisenhuettenstadt",
+      "Elmshorn",
+      "Engelade",
+      "England",
+      "Eppingen",
+      "Erfurt",
+      "Erlach",
+      "Erlenbach",
+      "Eschborn",
+      "Essen",
+      "Esslingen",
+      "Falkenstein",
+      "Flensburg",
+      "Frankfurt am Main",
+      "Freiburg",
+      "Freinsheim",
+      "Fulda",
+      "Gallus",
+      "Grossbreitenbach",
+      "Gunzenhausen",
+      "Hamburg",
+      "Hamm",
+      "Hammel",
+      "Hanover",
+      "Hassfurt",
+      "Hausen vor Wald",
+      "Heidelberg",
+      "Heiligenhafen",
+      "Herford",
+      "Hessen",
+      "Ingelheim-Nord",
+      "Isenburg",
+      "Karlsruhe",
+      "Kiel",
+      "Koblenz",
+      "Koeln",
+      "Krefeld",
+      "Langen",
+      "Leer",
+      "Leipzig",
+      "Limburg an der Lahn",
+      "Lingen",
+      "Lippinghausen",
+      "Luebeck",
+      "Magdeburg",
+      "Mannheim",
+      "Merzenich",
+      "Miltenberg",
+      "Mittel Horka",
+      "Monchengladbach",
+      "Muenster",
+      "Munich",
+      "Neckartenzlingen",
+      "Neu Hacklingen",
+      "Neudingen",
+      "Neumunster",
+      "Norderstedt",
+      "Nuremberg",
+      "Oberasbach",
+      "Pegnitz",
+      "Platz",
+      "Quedlinburg",
+      "Ravensburg",
+      "Regensburg",
+      "Riederwald",
+      "Rossgen",
+      "Rostock",
+      "Saarbrucken",
+      "Schermbeck",
+      "Schleswig",
+      "Schonau-Berzdorf",
+      "Schwerin",
+      "Seesen",
+      "Siedlung Nordhorner Strasse",
+      "Sietwende",
+      "Soden",
+      "Sontra",
+      "Stuttgart",
+      "Sulzbach",
+      "Titschendorf",
+      "Trupermoor",
+      "Ulm",
+      "Veert",
+      "Westerndorf-Sankt Peter",
+      "Wieseck",
+      "Wollbrandshausen",
+      "Worth am Main",
+      "Wuerzburg",
+      "Wyler",
+      "Zwickau"
+    ],
+    "regions": [
+      {
+        "code": "BW",
+        "name": "Baden-Württemberg"
+      },
+      {
+        "code": "BY",
+        "name": "Bayern"
+      },
+      {
+        "code": "BE",
+        "name": "Berlin"
+      },
+      {
+        "code": "BB",
+        "name": "Brandenburg"
+      },
+      {
+        "code": "HB",
+        "name": "Bremen"
+      },
+      {
+        "code": "HH",
+        "name": "Hamburg"
+      },
+      {
+        "code": "HE",
+        "name": "Hessen"
+      },
+      {
+        "code": "MV",
+        "name": "Mecklenburg-Vorpommern"
+      },
+      {
+        "code": "NI",
+        "name": "Niedersachsen"
+      },
+      {
+        "code": "NW",
+        "name": "Nordrhein-Westfalen"
+      },
+      {
+        "code": "RP",
+        "name": "Rheinland-Pfalz"
+      },
+      {
+        "code": "SL",
+        "name": "Saarland"
+      },
+      {
+        "code": "SN",
+        "name": "Sachsen"
+      },
+      {
+        "code": "ST",
+        "name": "Sachsen-Anhalt"
+      },
+      {
+        "code": "SH",
+        "name": "Schleswig-Holstein"
+      },
+      {
+        "code": "TH",
+        "name": "Thüringen"
+      }
+    ]
+  },
+  "ES": {
+    "cities": [
+      "Algeciras",
+      "Alicante",
+      "Barcelona",
+      "Beasain",
+      "Benahavis",
+      "Bilbao",
+      "Briviesca",
+      "Cadiz",
+      "Castellana",
+      "Ciudad Real",
+      "Cordoba",
+      "Empuriabrava",
+      "Girona",
+      "Gor",
+      "Hinojosa del Duque",
+      "Jaen",
+      "La Manga del Mar Menor",
+      "Las Rozas de Madrid",
+      "Llanca",
+      "Lorca",
+      "Madrid",
+      "Malaga",
+      "Manises",
+      "Melilla",
+      "Monforte de Lemos",
+      "Mota del Cuervo",
+      "Motril",
+      "Murcia",
+      "Navas de San Juan",
+      "Orba",
+      "Ourense",
+      "Oviedo",
+      "Palencia",
+      "Palma",
+      "Pilar de la Horadada",
+      "Pontevedra",
+      "Reus",
+      "Ribarroja del Turia",
+      "Rioja",
+      "Ronda",
+      "Roses",
+      "San Miguel de Salinas",
+      "San Sebastian de los Reyes",
+      "Sant Celoni",
+      "Sant Francesc de Formentera",
+      "Sant Just Desvern",
+      "Santa Cruz",
+      "Santa Cruz de Tenerife",
+      "Santiago de Compostela",
+      "Santona",
+      "Sevilla",
+      "Tarragona",
+      "Torrelavega",
+      "Valencia",
+      "Vic",
+      "Villanueva de Algaidas",
+      "Villarrobledo",
+      "Villena",
+      "Vitoria-Gasteiz",
+      "Zaragoza"
+    ],
+    "regions": [
+      {
+        "code": "C",
+        "name": "A Coruña [La Coruña]"
+      },
+      {
+        "code": "AB",
+        "name": "Albacete"
+      },
+      {
+        "code": "A",
+        "name": "Alicante"
+      },
+      {
+        "code": "AL",
+        "name": "Almería"
+      },
+      {
+        "code": "AN",
+        "name": "Andalucía"
+      },
+      {
+        "code": "AR",
+        "name": "Aragón"
+      },
+      {
+        "code": "O",
+        "name": "Asturias"
+      },
+      {
+        "code": "AS",
+        "name": "Asturias, Principado de"
+      },
+      {
+        "code": "BA",
+        "name": "Badajoz"
+      },
+      {
+        "code": "B",
+        "name": "Barcelona [Barcelona]"
+      },
+      {
+        "code": "BI",
+        "name": "Bizkaia"
+      },
+      {
+        "code": "BU",
+        "name": "Burgos"
+      },
+      {
+        "code": "CN",
+        "name": "Canarias"
+      },
+      {
+        "code": "CB",
+        "name": "Cantabria"
+      },
+      {
+        "code": "S",
+        "name": "Cantabria"
+      },
+      {
+        "code": "CS",
+        "name": "Castellón"
+      },
+      {
+        "code": "CL",
+        "name": "Castilla y León"
+      },
+      {
+        "code": "CM",
+        "name": "Castilla-La Mancha"
+      },
+      {
+        "code": "CT",
+        "name": "Catalunya [Cataluña]"
+      },
+      {
+        "code": "CE",
+        "name": "Ceuta"
+      },
+      {
+        "code": "CR",
+        "name": "Ciudad Real"
+      },
+      {
+        "code": "CU",
+        "name": "Cuenca"
+      },
+      {
+        "code": "CC",
+        "name": "Cáceres"
+      },
+      {
+        "code": "CA",
+        "name": "Cádiz"
+      },
+      {
+        "code": "CO",
+        "name": "Córdoba"
+      },
+      {
+        "code": "EX",
+        "name": "Extremadura"
+      },
+      {
+        "code": "GA",
+        "name": "Galicia [Galicia]"
+      },
+      {
+        "code": "SS",
+        "name": "Gipuzkoa"
+      },
+      {
+        "code": "GI",
+        "name": "Girona [Gerona]"
+      },
+      {
+        "code": "GR",
+        "name": "Granada"
+      },
+      {
+        "code": "GU",
+        "name": "Guadalajara"
+      },
+      {
+        "code": "H",
+        "name": "Huelva"
+      },
+      {
+        "code": "HU",
+        "name": "Huesca"
+      },
+      {
+        "code": "IB",
+        "name": "Illes Balears [Islas Baleares]"
+      },
+      {
+        "code": "PM",
+        "name": "Illes Balears [Islas Baleares]"
+      },
+      {
+        "code": "J",
+        "name": "Jaén"
+      },
+      {
+        "code": "LO",
+        "name": "La Rioja"
+      },
+      {
+        "code": "RI",
+        "name": "La Rioja"
+      },
+      {
+        "code": "GC",
+        "name": "Las Palmas"
+      },
+      {
+        "code": "LE",
+        "name": "León"
+      },
+      {
+        "code": "L",
+        "name": "Lleida [Lérida]"
+      },
+      {
+        "code": "LU",
+        "name": "Lugo [Lugo]"
+      },
+      {
+        "code": "M",
+        "name": "Madrid"
+      },
+      {
+        "code": "MD",
+        "name": "Madrid, Comunidad de"
+      },
+      {
+        "code": "ML",
+        "name": "Melilla"
+      },
+      {
+        "code": "MU",
+        "name": "Murcia"
+      },
+      {
+        "code": "MC",
+        "name": "Murcia, Región de"
+      },
+      {
+        "code": "MA",
+        "name": "Málaga"
+      },
+      {
+        "code": "NA",
+        "name": "Navarra"
+      },
+      {
+        "code": "NC",
+        "name": "Navarra, Comunidad Foral de"
+      },
+      {
+        "code": "OR",
+        "name": "Ourense [Orense]"
+      },
+      {
+        "code": "P",
+        "name": "Palencia"
+      },
+      {
+        "code": "PV",
+        "name": "País Vasco"
+      },
+      {
+        "code": "PO",
+        "name": "Pontevedra [Pontevedra]"
+      },
+      {
+        "code": "SA",
+        "name": "Salamanca"
+      },
+      {
+        "code": "TF",
+        "name": "Santa Cruz de Tenerife"
+      },
+      {
+        "code": "SG",
+        "name": "Segovia"
+      },
+      {
+        "code": "SE",
+        "name": "Sevilla"
+      },
+      {
+        "code": "SO",
+        "name": "Soria"
+      },
+      {
+        "code": "T",
+        "name": "Tarragona [Tarragona]"
+      },
+      {
+        "code": "TE",
+        "name": "Teruel"
+      },
+      {
+        "code": "TO",
+        "name": "Toledo"
+      },
+      {
+        "code": "V",
+        "name": "Valencia"
+      },
+      {
+        "code": "VC",
+        "name": "Valenciana, Comunidad"
+      },
+      {
+        "code": "VA",
+        "name": "Valladolid"
+      },
+      {
+        "code": "ZA",
+        "name": "Zamora"
+      },
+      {
+        "code": "Z",
+        "name": "Zaragoza"
+      },
+      {
+        "code": "VI",
+        "name": "Álava"
+      },
+      {
+        "code": "AV",
+        "name": "Ávila"
+      }
+    ]
+  },
+  "FR": {
+    "cities": [
+      "Ahun",
+      "Ajaccio",
+      "Amiens",
+      "Aubervilliers",
+      "Aulnay-sous-Bois",
+      "Bachy",
+      "Bas-en-Basset",
+      "Bavans",
+      "Bedarieux",
+      "Bethune",
+      "Bordeaux",
+      "Bordes-de-Riviere",
+      "Boulogne-Billancourt",
+      "Bourges",
+      "Brantome",
+      "Brignoles",
+      "Bussac-sur-Charente",
+      "Caen",
+      "Calais",
+      "Calvi",
+      "Camon",
+      "Caro",
+      "Castets",
+      "Cauville-sur-Mer",
+      "Cepoy",
+      "Chambery",
+      "Champs-sur-Marne",
+      "Chateaulin",
+      "Chatillon",
+      "Clermont-Ferrand",
+      "Colpo",
+      "Compiegne",
+      "Cousin-la-Roche",
+      "Dangers",
+      "Dienville",
+      "Dijon",
+      "Dinard",
+      "Dreux",
+      "Fontenay-le-Comte",
+      "Forbach",
+      "Forges",
+      "Gan",
+      "Gravelines",
+      "Hyeres",
+      "Istres",
+      "L'Hotellerie",
+      "La Glacerie",
+      "La Loupe",
+      "Lannemezan",
+      "Lanta",
+      "Lauterbourg",
+      "Le Chambon-Feugerolles",
+      "Le Quesnoy",
+      "Lille",
+      "Limoges",
+      "Longwy",
+      "Luzy",
+      "Lyon",
+      "Marseille",
+      "Maxeville",
+      "Menton",
+      "Meudon",
+      "Montmoreau-Saint-Cybard",
+      "Montpellier",
+      "Moussy-le-Vieux",
+      "Mulhouse",
+      "Nanterre",
+      "Nantes",
+      "Nimes",
+      "Paris",
+      "Perpignan",
+      "Pierrelatte",
+      "Pleyber-Christ",
+      "Plouagat",
+      "Pont-de-Salars",
+      "Pontoise",
+      "Rennes",
+      "Roubaix",
+      "Rouen",
+      "Saint-Avold",
+      "Saint-Brieuc",
+      "Saint-Denis",
+      "Saint-Georges-de-Reneins",
+      "Saint-Gilles-Croix-de-Vie",
+      "Saint-Jean-de-Luz",
+      "Saint-Lo",
+      "Saint-Meme-les-Carrieres",
+      "Saint-Sulpice-la-Pointe",
+      "Sainte-Feyre",
+      "Salaise-sur-Sanne",
+      "Salon-de-Provence",
+      "Santec",
+      "Septemes-les-Vallons",
+      "Strasbourg",
+      "Thiron Gardais",
+      "Tignes",
+      "Toulouse",
+      "Vannes",
+      "Varengeville-sur-Mer",
+      "Velizy-Villacoublay",
+      "Ville",
+      "Vitrolles",
+      "Wissembourg"
+    ],
+    "regions": [
+      {
+        "code": "01",
+        "name": "Ain"
+      },
+      {
+        "code": "02",
+        "name": "Aisne"
+      },
+      {
+        "code": "03",
+        "name": "Allier"
+      },
+      {
+        "code": "04",
+        "name": "Alpes-de-Haute-Provence"
+      },
+      {
+        "code": "06",
+        "name": "Alpes-Maritimes"
+      },
+      {
+        "code": "6AE",
+        "name": "Alsace"
+      },
+      {
+        "code": "08",
+        "name": "Ardennes"
+      },
+      {
+        "code": "07",
+        "name": "Ardèche"
+      },
+      {
+        "code": "09",
+        "name": "Ariège"
+      },
+      {
+        "code": "10",
+        "name": "Aube"
+      },
+      {
+        "code": "11",
+        "name": "Aude"
+      },
+      {
+        "code": "ARA",
+        "name": "Auvergne-Rhône-Alpes"
+      },
+      {
+        "code": "12",
+        "name": "Aveyron"
+      },
+      {
+        "code": "67",
+        "name": "Bas-Rhin"
+      },
+      {
+        "code": "13",
+        "name": "Bouches-du-Rhône"
+      },
+      {
+        "code": "BFC",
+        "name": "Bourgogne-Franche-Comté"
+      },
+      {
+        "code": "BRE",
+        "name": "Bretagne"
+      },
+      {
+        "code": "14",
+        "name": "Calvados"
+      },
+      {
+        "code": "15",
+        "name": "Cantal"
+      },
+      {
+        "code": "CVL",
+        "name": "Centre-Val de Loire"
+      },
+      {
+        "code": "16",
+        "name": "Charente"
+      },
+      {
+        "code": "17",
+        "name": "Charente-Maritime"
+      },
+      {
+        "code": "18",
+        "name": "Cher"
+      },
+      {
+        "code": "CP",
+        "name": "Clipperton"
+      },
+      {
+        "code": "19",
+        "name": "Corrèze"
+      },
+      {
+        "code": "20R",
+        "name": "Corse"
+      },
+      {
+        "code": "2A",
+        "name": "Corse-du-Sud"
+      },
+      {
+        "code": "23",
+        "name": "Creuse"
+      },
+      {
+        "code": "21",
+        "name": "Côte-d'Or"
+      },
+      {
+        "code": "22",
+        "name": "Côtes-d'Armor"
+      },
+      {
+        "code": "79",
+        "name": "Deux-Sèvres"
+      },
+      {
+        "code": "24",
+        "name": "Dordogne"
+      },
+      {
+        "code": "25",
+        "name": "Doubs"
+      },
+      {
+        "code": "26",
+        "name": "Drôme"
+      },
+      {
+        "code": "91",
+        "name": "Essonne"
+      },
+      {
+        "code": "27",
+        "name": "Eure"
+      },
+      {
+        "code": "28",
+        "name": "Eure-et-Loir"
+      },
+      {
+        "code": "29",
+        "name": "Finistère"
+      },
+      {
+        "code": "30",
+        "name": "Gard"
+      },
+      {
+        "code": "32",
+        "name": "Gers"
+      },
+      {
+        "code": "33",
+        "name": "Gironde"
+      },
+      {
+        "code": "GES",
+        "name": "Grand-Est"
+      },
+      {
+        "code": "971",
+        "name": "Guadeloupe"
+      },
+      {
+        "code": "973",
+        "name": "Guyane (française)"
+      },
+      {
+        "code": "68",
+        "name": "Haut-Rhin"
+      },
+      {
+        "code": "2B",
+        "name": "Haute-Corse"
+      },
+      {
+        "code": "31",
+        "name": "Haute-Garonne"
+      },
+      {
+        "code": "43",
+        "name": "Haute-Loire"
+      },
+      {
+        "code": "52",
+        "name": "Haute-Marne"
+      },
+      {
+        "code": "74",
+        "name": "Haute-Savoie"
+      },
+      {
+        "code": "70",
+        "name": "Haute-Saône"
+      },
+      {
+        "code": "87",
+        "name": "Haute-Vienne"
+      },
+      {
+        "code": "05",
+        "name": "Hautes-Alpes"
+      },
+      {
+        "code": "65",
+        "name": "Hautes-Pyrénées"
+      },
+      {
+        "code": "HDF",
+        "name": "Hauts-de-France"
+      },
+      {
+        "code": "92",
+        "name": "Hauts-de-Seine"
+      },
+      {
+        "code": "34",
+        "name": "Hérault"
+      },
+      {
+        "code": "35",
+        "name": "Ille-et-Vilaine"
+      },
+      {
+        "code": "36",
+        "name": "Indre"
+      },
+      {
+        "code": "37",
+        "name": "Indre-et-Loire"
+      },
+      {
+        "code": "38",
+        "name": "Isère"
+      },
+      {
+        "code": "39",
+        "name": "Jura"
+      },
+      {
+        "code": "974",
+        "name": "La Réunion"
+      },
+      {
+        "code": "40",
+        "name": "Landes"
+      },
+      {
+        "code": "41",
+        "name": "Loir-et-Cher"
+      },
+      {
+        "code": "42",
+        "name": "Loire"
+      },
+      {
+        "code": "44",
+        "name": "Loire-Atlantique"
+      },
+      {
+        "code": "45",
+        "name": "Loiret"
+      },
+      {
+        "code": "46",
+        "name": "Lot"
+      },
+      {
+        "code": "47",
+        "name": "Lot-et-Garonne"
+      },
+      {
+        "code": "48",
+        "name": "Lozère"
+      },
+      {
+        "code": "49",
+        "name": "Maine-et-Loire"
+      },
+      {
+        "code": "50",
+        "name": "Manche"
+      },
+      {
+        "code": "51",
+        "name": "Marne"
+      },
+      {
+        "code": "972",
+        "name": "Martinique"
+      },
+      {
+        "code": "53",
+        "name": "Mayenne"
+      },
+      {
+        "code": "976",
+        "name": "Mayotte"
+      },
+      {
+        "code": "54",
+        "name": "Meurthe-et-Moselle"
+      },
+      {
+        "code": "55",
+        "name": "Meuse"
+      },
+      {
+        "code": "56",
+        "name": "Morbihan"
+      },
+      {
+        "code": "57",
+        "name": "Moselle"
+      },
+      {
+        "code": "69M",
+        "name": "Métropole de Lyon"
+      },
+      {
+        "code": "58",
+        "name": "Nièvre"
+      },
+      {
+        "code": "59",
+        "name": "Nord"
+      },
+      {
+        "code": "NOR",
+        "name": "Normandie"
+      },
+      {
+        "code": "NAQ",
+        "name": "Nouvelle-Aquitaine"
+      },
+      {
+        "code": "NC",
+        "name": "Nouvelle-Calédonie"
+      },
+      {
+        "code": "OCC",
+        "name": "Occitanie"
+      },
+      {
+        "code": "60",
+        "name": "Oise"
+      },
+      {
+        "code": "61",
+        "name": "Orne"
+      },
+      {
+        "code": "75C",
+        "name": "Paris"
+      },
+      {
+        "code": "62",
+        "name": "Pas-de-Calais"
+      },
+      {
+        "code": "PDL",
+        "name": "Pays-de-la-Loire"
+      },
+      {
+        "code": "PF",
+        "name": "Polynésie française"
+      },
+      {
+        "code": "PAC",
+        "name": "Provence-Alpes-Côte-d’Azur"
+      },
+      {
+        "code": "63",
+        "name": "Puy-de-Dôme"
+      },
+      {
+        "code": "64",
+        "name": "Pyrénées-Atlantiques"
+      },
+      {
+        "code": "66",
+        "name": "Pyrénées-Orientales"
+      },
+      {
+        "code": "69",
+        "name": "Rhône"
+      },
+      {
+        "code": "BL",
+        "name": "Saint-Barthélemy"
+      },
+      {
+        "code": "MF",
+        "name": "Saint-Martin"
+      },
+      {
+        "code": "PM",
+        "name": "Saint-Pierre-et-Miquelon"
+      },
+      {
+        "code": "72",
+        "name": "Sarthe"
+      },
+      {
+        "code": "73",
+        "name": "Savoie"
+      },
+      {
+        "code": "71",
+        "name": "Saône-et-Loire"
+      },
+      {
+        "code": "77",
+        "name": "Seine-et-Marne"
+      },
+      {
+        "code": "76",
+        "name": "Seine-Maritime"
+      },
+      {
+        "code": "93",
+        "name": "Seine-Saint-Denis"
+      },
+      {
+        "code": "80",
+        "name": "Somme"
+      },
+      {
+        "code": "81",
+        "name": "Tarn"
+      },
+      {
+        "code": "82",
+        "name": "Tarn-et-Garonne"
+      },
+      {
+        "code": "TF",
+        "name": "Terres australes françaises"
+      },
+      {
+        "code": "90",
+        "name": "Territoire de Belfort"
+      },
+      {
+        "code": "95",
+        "name": "Val-d'Oise"
+      },
+      {
+        "code": "94",
+        "name": "Val-de-Marne"
+      },
+      {
+        "code": "83",
+        "name": "Var"
+      },
+      {
+        "code": "84",
+        "name": "Vaucluse"
+      },
+      {
+        "code": "85",
+        "name": "Vendée"
+      },
+      {
+        "code": "86",
+        "name": "Vienne"
+      },
+      {
+        "code": "88",
+        "name": "Vosges"
+      },
+      {
+        "code": "WF",
+        "name": "Wallis-et-Futuna"
+      },
+      {
+        "code": "89",
+        "name": "Yonne"
+      },
+      {
+        "code": "78",
+        "name": "Yvelines"
+      },
+      {
+        "code": "IDF",
+        "name": "Île-de-France"
+      }
+    ]
+  },
+  "GB": {
+    "cities": [
+      "Aberdeen",
+      "Abingdon",
+      "Abington",
+      "Adel",
+      "Ainsdale",
+      "Alfold",
+      "Alford",
+      "Alloway",
+      "Alness",
+      "Alnwick",
+      "Alveley",
+      "Amble",
+      "Ambleside",
+      "Andover",
+      "Annan",
+      "Annesley",
+      "Annfield Plain",
+      "Ardclach",
+      "Ardnagrask",
+      "Ardrossan",
+      "Arlesey",
+      "Ashbourne",
+      "Ashby de la Zouch",
+      "Ashmanhaugh",
+      "Astley",
+      "Aughamullan",
+      "Aylsham",
+      "Balderton",
+      "Ball",
+      "Ballycastle",
+      "Ballymena",
+      "Ballymoney",
+      "Ballynagard",
+      "Ballywalter",
+      "Banbridge",
+      "Banbury",
+      "Banchory",
+      "Banff",
+      "Bangor",
+      "Banks",
+      "Barassie",
+      "Barbican",
+      "Barking",
+      "Barlestone",
+      "Barnoldswick",
+      "Barrow in Furness",
+      "Barrowby",
+      "Barsby",
+      "Bartley",
+      "Barton on Sea",
+      "Basford",
+      "Basingstoke",
+      "Bath",
+      "Beccles",
+      "Beckermet",
+      "Bedford",
+      "Bedingfield",
+      "Bedlington",
+      "Belfast",
+      "Belle Vue",
+      "Belper",
+      "Belton",
+      "Bersted",
+      "Berwick-Upon-Tweed",
+      "Bicker",
+      "Bideford",
+      "Binbrook",
+      "Birchanger",
+      "Birmingham",
+      "Birnam",
+      "Birstwith",
+      "Bishop Auckland",
+      "Bishops Waltham",
+      "Blackpool",
+      "Blairmore",
+      "Bodmin",
+      "Borehamwood",
+      "Bournemouth",
+      "Bovington Camp",
+      "Brackley",
+      "Bradford",
+      "Bradwell on Sea",
+      "Bramford",
+      "Brechin",
+      "Brent",
+      "Brentwood",
+      "Brick Lane",
+      "Bridgend",
+      "Bridgwater",
+      "Bridlington",
+      "Bridport",
+      "Brighton",
+      "Brigsley",
+      "Bristol",
+      "Briston",
+      "Broadstairs",
+      "Bromley",
+      "Brotton",
+      "Brumby",
+      "Bucknall",
+      "Burnham on Crouch",
+      "Burnhaven",
+      "Burnley",
+      "Burscough",
+      "Burstwick",
+      "Burton Lazars",
+      "Bury St Edmunds",
+      "Bushmills",
+      "Butteryhaugh",
+      "Byfleet",
+      "Cabourne",
+      "Caister-on-Sea",
+      "Caldy",
+      "Calrossie",
+      "Cambridge",
+      "Camelon",
+      "Campbeltown",
+      "Canterbury",
+      "Carbis Bay",
+      "Cardiff",
+      "Carlisle",
+      "Carlton Colville",
+      "Carluke",
+      "Carron",
+      "Castle Bytham",
+      "Castle Donington",
+      "Castledawson",
+      "Catterall",
+      "Catterick Camp",
+      "Caverswall",
+      "Cayton",
+      "Cefn-coed-y-cymmer",
+      "Cefn-y-bedd",
+      "Chale",
+      "Chapel Saint Leonards",
+      "Chatteris",
+      "Cheadle",
+      "Chelmsford",
+      "Cheltenham",
+      "Chepstow",
+      "Chesham",
+      "Chester",
+      "Chesterfield",
+      "Choppington",
+      "Church Stoke",
+      "Churchtown",
+      "Clawton",
+      "Cleethorpes",
+      "Cleveleys",
+      "Clydebank",
+      "Coalville",
+      "Colchester",
+      "Coleraine",
+      "Colpy",
+      "Colton",
+      "Conwy",
+      "Cornhill",
+      "Cosham",
+      "Coton",
+      "Cottingham",
+      "Covent Garden",
+      "Coventry",
+      "Coylton",
+      "Craigavon",
+      "Cranfield",
+      "Cranmore",
+      "Crewe",
+      "Cribyn",
+      "Crieff",
+      "Cumbernauld",
+      "Cumnock",
+      "Curran",
+      "Dalavich",
+      "Daresbury",
+      "Daventry",
+      "Daviot",
+      "Deal",
+      "Derby",
+      "Derry",
+      "Dersingham",
+      "Desertmartin",
+      "Distington",
+      "Dover",
+      "Dreghorn",
+      "Drumcree",
+      "Dumbarton",
+      "Dumfries",
+      "Dunbar",
+      "Dundee",
+      "Dungiven",
+      "Dunvegan",
+      "Durham",
+      "Earl Shilton",
+      "Easby",
+      "East Kilbride",
+      "Eastleigh",
+      "Eastoft",
+      "Ecclefechan",
+      "Edinburgh",
+      "Edwinstowe",
+      "Edworth",
+      "Egremont",
+      "Elderslie",
+      "Emsworth",
+      "Exeter",
+      "Fareham",
+      "Farnborough",
+      "Farnham",
+      "Felixstowe",
+      "Filey",
+      "Folkestone",
+      "Forfar",
+      "Formby",
+      "Fornham Saint Martin",
+      "Fort William",
+      "Foryd",
+      "Foyers",
+      "Foyle Hill",
+      "Fraserburgh",
+      "Fremington",
+      "Fritton",
+      "Frodingham",
+      "Frome",
+      "Garlinge",
+      "Garstang",
+      "Gaywood",
+      "Gerrards Cross",
+      "Gilling",
+      "Gilmorton",
+      "Gipping",
+      "Glasgow",
+      "Glengarnock",
+      "Gloucester",
+      "Gorslas",
+      "Gosport",
+      "Gracefield",
+      "Grangemouth",
+      "Grantham",
+      "Great Clacton",
+      "Great Coates",
+      "Great Maplestead",
+      "Great Marton",
+      "Great Stukeley",
+      "Greenfield",
+      "Greenock",
+      "Gresford",
+      "Grimbsy",
+      "Guildford",
+      "Guisborough",
+      "Gunton",
+      "Hadston",
+      "Hamilton",
+      "Hammersmith",
+      "Hampsthwaite",
+      "Hanthorpe",
+      "Harleston",
+      "Harlow",
+      "Haroldswick",
+      "Harrogate",
+      "Hartford",
+      "Hartlepool",
+      "Hassocks",
+      "Hatfield",
+      "Haughton le Skerne",
+      "Haverhill",
+      "Haverigg",
+      "Hawen",
+      "Hawkinge",
+      "Haworth",
+      "Heacham",
+      "Hemingford Grey",
+      "Hempstead",
+      "Henstridge",
+      "Hereford",
+      "Hessle",
+      "Heydon",
+      "High Barnet",
+      "Highbridge",
+      "Hirwaun",
+      "Holt",
+      "Horncastle",
+      "Hornsea",
+      "Horsham",
+      "Hounslow",
+      "Houston",
+      "Hoxne",
+      "Hubberston",
+      "Huddersfield",
+      "Hull",
+      "Humberston",
+      "Huxley",
+      "Ickornshaw",
+      "Ilfracombe",
+      "Ilminster",
+      "Ingrow",
+      "Inshes",
+      "Ipswich",
+      "Keele",
+      "Keighley",
+      "Kendal",
+      "Kenn",
+      "Kennett",
+      "Kent",
+      "Kessingland",
+      "Ketton",
+      "Keyingham",
+      "Kidlington",
+      "Kilbirnie",
+      "Kilmacolm",
+      "Kilsyth",
+      "King's Lynn",
+      "Kingsbury Episcopi",
+      "Kingsdown",
+      "Kingsgate",
+      "Kingston",
+      "Kingston upon Thames",
+      "Kirkham",
+      "Kirkstall",
+      "Knaith",
+      "Knockmore",
+      "Lancaster",
+      "Larbert",
+      "Larkfield",
+      "Larne",
+      "Launceston",
+      "Layham",
+      "Leconfield",
+      "Leeds",
+      "Leicester",
+      "Leswalt",
+      "Letheringsett",
+      "Letterston",
+      "Lewiston",
+      "Lhanbryd",
+      "Lincoln",
+      "Little Clacton",
+      "Little Coates",
+      "Little Common",
+      "Liverpool",
+      "Livingston",
+      "Llanasa",
+      "Llanddulas",
+      "Llandrindod Wells",
+      "Llandudno",
+      "Llanfair Clydogau",
+      "Llangefni",
+      "Llangunnor",
+      "Llanina",
+      "Llanycrwys",
+      "Llywel",
+      "Lochwinnoch",
+      "London",
+      "Long Itchington",
+      "Longmorn",
+      "Longton",
+      "Loughborough",
+      "Lucknow",
+      "Lurgan",
+      "Lymington",
+      "Madley",
+      "Maerdy",
+      "Magherafelt",
+      "Maidenhall",
+      "Maidenhead",
+      "Maindee",
+      "Malvern",
+      "Manchester",
+      "Margate",
+      "Market Drayton",
+      "Marsham",
+      "Martlesham",
+      "Martock",
+      "Maryport",
+      "Mawdesley",
+      "Mawgan Porth",
+      "Meanwood",
+      "Measham",
+      "Melmerby",
+      "Melton Mowbray",
+      "Mendip",
+      "Messingham",
+      "Methwold",
+      "Middleham",
+      "Middlesbrough",
+      "Middleton One Row",
+      "Milford Haven",
+      "Millikenpark",
+      "Milltimber",
+      "Milton Keynes",
+      "Minehead",
+      "Mistley",
+      "Moffat",
+      "Mollinburn",
+      "Monkton",
+      "Monkton Heathfield",
+      "Needingworth",
+      "New Marske",
+      "New Radnor",
+      "New Shildon",
+      "New Silksworth",
+      "Newark on Trent",
+      "Newbigging",
+      "Newbold Verdon",
+      "Newbridge",
+      "Newbury",
+      "Newcastle upon Tyne",
+      "Newhall",
+      "Newlyn",
+      "Newmarket",
+      "Newport",
+      "Newport Trench",
+      "Newquay",
+      "Newry",
+      "Newton Aycliffe",
+      "Newtown",
+      "Norbreck",
+      "North Bersted",
+      "North Collingham",
+      "North Shields",
+      "Northampton",
+      "Norton Fitzwarren",
+      "Norwich",
+      "Nottingham",
+      "Nuneaton",
+      "Oban",
+      "Okehampton",
+      "Old Colwyn",
+      "Old Scone",
+      "Orby",
+      "Orston",
+      "Oswestry",
+      "Oulton",
+      "Oxford",
+      "Pagham",
+      "Paible",
+      "Pannal",
+      "Parbold",
+      "Paulton",
+      "Pembroke Dock",
+      "Pencader",
+      "Pentre",
+      "Penywaun",
+      "Perranporth",
+      "Perranuthnoe",
+      "Perth",
+      "Peterborough",
+      "Peterculter",
+      "Peterhead",
+      "Pinchbeck",
+      "Plymouth",
+      "Ponteland",
+      "Pontesbury",
+      "Poole",
+      "Poplar",
+      "Porkellis",
+      "Port Glasgow",
+      "Port Talbot",
+      "Portsmouth",
+      "Prudhoe",
+      "Ramsey",
+      "Ramsgate",
+      "Randalstown",
+      "Reading",
+      "Redcar",
+      "Redditch",
+      "Rendlesham",
+      "Rhigos",
+      "Rhyl",
+      "Ribchester",
+      "Rickinghall",
+      "Rigg",
+      "Rochdale",
+      "Rock",
+      "Rockland Saint Peter",
+      "Rooks Bridge",
+      "Rosscor",
+      "Rothesay",
+      "Rugby",
+      "Runcorn",
+      "Runcton Holme",
+      "Ruskington",
+      "Ryhope",
+      "Saint Agnes",
+      "Saint Albans",
+      "Saint Allen",
+      "Saint Andrews",
+      "Saint Annes on the Sea",
+      "Saint Athan",
+      "Saint Columb Minor",
+      "Saint Ives",
+      "Saint Keyne",
+      "Saint Vigeans",
+      "Salford",
+      "Salisbury",
+      "Saltfleetby Saint Peter",
+      "Sandford Saint Martin",
+      "Scarborough",
+      "Scorton",
+      "Scunthorpe",
+      "Seabrook",
+      "Seacroft",
+      "Seaham",
+      "Seamill",
+      "Selsey",
+      "Setchey",
+      "Settle",
+      "Seven Sisters",
+      "Sheffield",
+      "Sherburn",
+      "Shevington",
+      "Shildon",
+      "Shipley",
+      "Shoreham-by-Sea",
+      "Shotton",
+      "Shrewsbury",
+      "Sighthill",
+      "Silsden",
+      "Silvertown",
+      "Skegness",
+      "Skelmersdale",
+      "Skipton",
+      "Sleaford",
+      "Sleights",
+      "Slough",
+      "Small Heath",
+      "Snailwell",
+      "Solihull",
+      "South Hetton",
+      "South Kyme",
+      "South Walsham",
+      "South Wootton",
+      "Southampton",
+      "Southport",
+      "Southtown",
+      "Spalding",
+      "St Mary's Bay",
+      "Stafford",
+      "Stainsacre",
+      "Stansted Mountfitchet",
+      "Stevenage",
+      "Stevenston",
+      "Stirling",
+      "Stockbriggs",
+      "Stockton-on-Tees",
+      "Stokeham",
+      "Stowmarket",
+      "Stranraer",
+      "Street",
+      "Strichen",
+      "Studley",
+      "Suie",
+      "Sunbury-on-Thames",
+      "Sunderland",
+      "Swadlincote",
+      "Swansea",
+      "Swindon",
+      "Swingate",
+      "Swinton",
+      "Syderstone",
+      "Tallington",
+      "Tattershall",
+      "Taunton",
+      "Telford",
+      "Terrydremont",
+      "Thetford",
+      "Thorney",
+      "Thorpe le Soken",
+      "Thorpe Thewles",
+      "Thurso",
+      "Thurstaston",
+      "Tiptree",
+      "Titchfield",
+      "Toberonochy",
+      "Tonypandy",
+      "Town Green",
+      "Trebetherick",
+      "Trefnant",
+      "Tregaron",
+      "Trench",
+      "Trent",
+      "Trimley St Martin",
+      "Trimley St Mary",
+      "Trowbridge",
+      "Trull",
+      "Tywyn",
+      "Uddingston",
+      "Ulverston",
+      "Upholland",
+      "Upper Elkstone",
+      "Uppingham",
+      "Upton",
+      "Utley",
+      "Uxbridge",
+      "Uzmaston",
+      "Ventnor",
+      "Wakefield",
+      "Walkeringham",
+      "Walkerith",
+      "Walmer",
+      "Walsham le Willows",
+      "Walsoken",
+      "Walton le Dale",
+      "Warrington",
+      "Warwick",
+      "Washington",
+      "Watchet",
+      "Waterlooville",
+      "Wauldby",
+      "West Kilbride",
+      "West Runton",
+      "West Stoke",
+      "Westbury",
+      "Weston-super-Mare",
+      "Westonzoyland",
+      "Whitburn",
+      "Whitby",
+      "White Notley",
+      "Whitehaven",
+      "Whiteley",
+      "Willesden",
+      "Wilton",
+      "Windermere",
+      "Wittering",
+      "Woking",
+      "Wolverhampton",
+      "Woodbridge",
+      "Woodhall Spa",
+      "Woodhurst",
+      "Woodrising",
+      "Worcester",
+      "Worthing",
+      "Writhlington",
+      "Yaxham",
+      "York"
+    ],
+    "regions": [
+      {
+        "code": "ABE",
+        "name": "Aberdeen City"
+      },
+      {
+        "code": "ABD",
+        "name": "Aberdeenshire"
+      },
+      {
+        "code": "ANS",
+        "name": "Angus"
+      },
+      {
+        "code": "ANN",
+        "name": "Antrim and Newtownabbey"
+      },
+      {
+        "code": "AND",
+        "name": "Ards and North Down"
+      },
+      {
+        "code": "AGB",
+        "name": "Argyll and Bute"
+      },
+      {
+        "code": "ABC",
+        "name": "Armagh City, Banbridge and Craigavon"
+      },
+      {
+        "code": "BDG",
+        "name": "Barking and Dagenham"
+      },
+      {
+        "code": "BNE",
+        "name": "Barnet"
+      },
+      {
+        "code": "BNS",
+        "name": "Barnsley"
+      },
+      {
+        "code": "BAS",
+        "name": "Bath and North East Somerset"
+      },
+      {
+        "code": "BDF",
+        "name": "Bedford"
+      },
+      {
+        "code": "BFS",
+        "name": "Belfast City"
+      },
+      {
+        "code": "BEX",
+        "name": "Bexley"
+      },
+      {
+        "code": "BIR",
+        "name": "Birmingham"
+      },
+      {
+        "code": "BBD",
+        "name": "Blackburn with Darwen"
+      },
+      {
+        "code": "BPL",
+        "name": "Blackpool"
+      },
+      {
+        "code": "BGW",
+        "name": "Blaenau Gwent"
+      },
+      {
+        "code": "BOL",
+        "name": "Bolton"
+      },
+      {
+        "code": "BCP",
+        "name": "Bournemouth, Christchurch and Poole"
+      },
+      {
+        "code": "BRC",
+        "name": "Bracknell Forest"
+      },
+      {
+        "code": "BRD",
+        "name": "Bradford"
+      },
+      {
+        "code": "BEN",
+        "name": "Brent"
+      },
+      {
+        "code": "BGE",
+        "name": "Bridgend [Pen-y-bont ar Ogwr GB-POG]"
+      },
+      {
+        "code": "BNH",
+        "name": "Brighton and Hove"
+      },
+      {
+        "code": "BST",
+        "name": "Bristol, City of"
+      },
+      {
+        "code": "BRY",
+        "name": "Bromley"
+      },
+      {
+        "code": "BKM",
+        "name": "Buckinghamshire"
+      },
+      {
+        "code": "BUR",
+        "name": "Bury"
+      },
+      {
+        "code": "CAY",
+        "name": "Caerphilly [Caerffili GB-CAF]"
+      },
+      {
+        "code": "CLD",
+        "name": "Calderdale"
+      },
+      {
+        "code": "CAM",
+        "name": "Cambridgeshire"
+      },
+      {
+        "code": "CMD",
+        "name": "Camden"
+      },
+      {
+        "code": "CRF",
+        "name": "Cardiff [Caerdydd GB-CRD]"
+      },
+      {
+        "code": "CMN",
+        "name": "Carmarthenshire [Sir Gaerfyrddin GB-GFY]"
+      },
+      {
+        "code": "CCG",
+        "name": "Causeway Coast and Glens"
+      },
+      {
+        "code": "CBF",
+        "name": "Central Bedfordshire"
+      },
+      {
+        "code": "CGN",
+        "name": "Ceredigion [Sir Ceredigion]"
+      },
+      {
+        "code": "CHE",
+        "name": "Cheshire East"
+      },
+      {
+        "code": "CHW",
+        "name": "Cheshire West and Chester"
+      },
+      {
+        "code": "CLK",
+        "name": "Clackmannanshire"
+      },
+      {
+        "code": "CWY",
+        "name": "Conwy"
+      },
+      {
+        "code": "CON",
+        "name": "Cornwall"
+      },
+      {
+        "code": "COV",
+        "name": "Coventry"
+      },
+      {
+        "code": "CRY",
+        "name": "Croydon"
+      },
+      {
+        "code": "CMA",
+        "name": "Cumbria"
+      },
+      {
+        "code": "DAL",
+        "name": "Darlington"
+      },
+      {
+        "code": "DEN",
+        "name": "Denbighshire [Sir Ddinbych GB-DDB]"
+      },
+      {
+        "code": "DER",
+        "name": "Derby"
+      },
+      {
+        "code": "DBY",
+        "name": "Derbyshire"
+      },
+      {
+        "code": "DRS",
+        "name": "Derry and Strabane"
+      },
+      {
+        "code": "DEV",
+        "name": "Devon"
+      },
+      {
+        "code": "DNC",
+        "name": "Doncaster"
+      },
+      {
+        "code": "DOR",
+        "name": "Dorset"
+      },
+      {
+        "code": "DUD",
+        "name": "Dudley"
+      },
+      {
+        "code": "DGY",
+        "name": "Dumfries and Galloway"
+      },
+      {
+        "code": "DND",
+        "name": "Dundee City"
+      },
+      {
+        "code": "DUR",
+        "name": "Durham, County"
+      },
+      {
+        "code": "EAL",
+        "name": "Ealing"
+      },
+      {
+        "code": "EAY",
+        "name": "East Ayrshire"
+      },
+      {
+        "code": "EDU",
+        "name": "East Dunbartonshire"
+      },
+      {
+        "code": "ELN",
+        "name": "East Lothian"
+      },
+      {
+        "code": "ERW",
+        "name": "East Renfrewshire"
+      },
+      {
+        "code": "ERY",
+        "name": "East Riding of Yorkshire"
+      },
+      {
+        "code": "ESX",
+        "name": "East Sussex"
+      },
+      {
+        "code": "EDH",
+        "name": "Edinburgh, City of"
+      },
+      {
+        "code": "ELS",
+        "name": "Eilean Siar"
+      },
+      {
+        "code": "ENF",
+        "name": "Enfield"
+      },
+      {
+        "code": "ENG",
+        "name": "England"
+      },
+      {
+        "code": "ESS",
+        "name": "Essex"
+      },
+      {
+        "code": "FAL",
+        "name": "Falkirk"
+      },
+      {
+        "code": "FMO",
+        "name": "Fermanagh and Omagh"
+      },
+      {
+        "code": "FIF",
+        "name": "Fife"
+      },
+      {
+        "code": "FLN",
+        "name": "Flintshire [Sir y Fflint GB-FFL]"
+      },
+      {
+        "code": "GAT",
+        "name": "Gateshead"
+      },
+      {
+        "code": "GLG",
+        "name": "Glasgow City"
+      },
+      {
+        "code": "GLS",
+        "name": "Gloucestershire"
+      },
+      {
+        "code": "GRE",
+        "name": "Greenwich"
+      },
+      {
+        "code": "GWN",
+        "name": "Gwynedd"
+      },
+      {
+        "code": "HCK",
+        "name": "Hackney"
+      },
+      {
+        "code": "HAL",
+        "name": "Halton"
+      },
+      {
+        "code": "HMF",
+        "name": "Hammersmith and Fulham"
+      },
+      {
+        "code": "HAM",
+        "name": "Hampshire"
+      },
+      {
+        "code": "HRY",
+        "name": "Haringey"
+      },
+      {
+        "code": "HRW",
+        "name": "Harrow"
+      },
+      {
+        "code": "HPL",
+        "name": "Hartlepool"
+      },
+      {
+        "code": "HAV",
+        "name": "Havering"
+      },
+      {
+        "code": "HEF",
+        "name": "Herefordshire"
+      },
+      {
+        "code": "HRT",
+        "name": "Hertfordshire"
+      },
+      {
+        "code": "HLD",
+        "name": "Highland"
+      },
+      {
+        "code": "HIL",
+        "name": "Hillingdon"
+      },
+      {
+        "code": "HNS",
+        "name": "Hounslow"
+      },
+      {
+        "code": "IVC",
+        "name": "Inverclyde"
+      },
+      {
+        "code": "AGY",
+        "name": "Isle of Anglesey [Sir Ynys Môn GB-YNM]"
+      },
+      {
+        "code": "IOW",
+        "name": "Isle of Wight"
+      },
+      {
+        "code": "IOS",
+        "name": "Isles of Scilly"
+      },
+      {
+        "code": "ISL",
+        "name": "Islington"
+      },
+      {
+        "code": "KEC",
+        "name": "Kensington and Chelsea"
+      },
+      {
+        "code": "KEN",
+        "name": "Kent"
+      },
+      {
+        "code": "KHL",
+        "name": "Kingston upon Hull"
+      },
+      {
+        "code": "KTT",
+        "name": "Kingston upon Thames"
+      },
+      {
+        "code": "KIR",
+        "name": "Kirklees"
+      },
+      {
+        "code": "KWL",
+        "name": "Knowsley"
+      },
+      {
+        "code": "LBH",
+        "name": "Lambeth"
+      },
+      {
+        "code": "LAN",
+        "name": "Lancashire"
+      },
+      {
+        "code": "LDS",
+        "name": "Leeds"
+      },
+      {
+        "code": "LCE",
+        "name": "Leicester"
+      },
+      {
+        "code": "LEC",
+        "name": "Leicestershire"
+      },
+      {
+        "code": "LEW",
+        "name": "Lewisham"
+      },
+      {
+        "code": "LIN",
+        "name": "Lincolnshire"
+      },
+      {
+        "code": "LBC",
+        "name": "Lisburn and Castlereagh"
+      },
+      {
+        "code": "LIV",
+        "name": "Liverpool"
+      },
+      {
+        "code": "LND",
+        "name": "London, City of"
+      },
+      {
+        "code": "LUT",
+        "name": "Luton"
+      },
+      {
+        "code": "MAN",
+        "name": "Manchester"
+      },
+      {
+        "code": "MDW",
+        "name": "Medway"
+      },
+      {
+        "code": "MTY",
+        "name": "Merthyr Tydfil [Merthyr Tudful GB-MTU]"
+      },
+      {
+        "code": "MRT",
+        "name": "Merton"
+      },
+      {
+        "code": "MEA",
+        "name": "Mid and East Antrim"
+      },
+      {
+        "code": "MUL",
+        "name": "Mid-Ulster"
+      },
+      {
+        "code": "MDB",
+        "name": "Middlesbrough"
+      },
+      {
+        "code": "MLN",
+        "name": "Midlothian"
+      },
+      {
+        "code": "MIK",
+        "name": "Milton Keynes"
+      },
+      {
+        "code": "MON",
+        "name": "Monmouthshire [Sir Fynwy GB-FYN]"
+      },
+      {
+        "code": "MRY",
+        "name": "Moray"
+      },
+      {
+        "code": "NTL",
+        "name": "Neath Port Talbot [Castell-nedd Port Talbot GB-CTL]"
+      },
+      {
+        "code": "NET",
+        "name": "Newcastle upon Tyne"
+      },
+      {
+        "code": "NWM",
+        "name": "Newham"
+      },
+      {
+        "code": "NWP",
+        "name": "Newport [Casnewydd GB-CNW]"
+      },
+      {
+        "code": "NMD",
+        "name": "Newry, Mourne and Down"
+      },
+      {
+        "code": "NFK",
+        "name": "Norfolk"
+      },
+      {
+        "code": "NAY",
+        "name": "North Ayrshire"
+      },
+      {
+        "code": "NEL",
+        "name": "North East Lincolnshire"
+      },
+      {
+        "code": "NLK",
+        "name": "North Lanarkshire"
+      },
+      {
+        "code": "NLN",
+        "name": "North Lincolnshire"
+      },
+      {
+        "code": "NNH",
+        "name": "North Northamptonshire"
+      },
+      {
+        "code": "NSM",
+        "name": "North Somerset"
+      },
+      {
+        "code": "NTY",
+        "name": "North Tyneside"
+      },
+      {
+        "code": "NYK",
+        "name": "North Yorkshire"
+      },
+      {
+        "code": "NIR",
+        "name": "Northern Ireland"
+      },
+      {
+        "code": "NBL",
+        "name": "Northumberland"
+      },
+      {
+        "code": "NGM",
+        "name": "Nottingham"
+      },
+      {
+        "code": "NTT",
+        "name": "Nottinghamshire"
+      },
+      {
+        "code": "OLD",
+        "name": "Oldham"
+      },
+      {
+        "code": "ORK",
+        "name": "Orkney Islands"
+      },
+      {
+        "code": "OXF",
+        "name": "Oxfordshire"
+      },
+      {
+        "code": "PEM",
+        "name": "Pembrokeshire [Sir Benfro GB-BNF]"
+      },
+      {
+        "code": "PKN",
+        "name": "Perth and Kinross"
+      },
+      {
+        "code": "PTE",
+        "name": "Peterborough"
+      },
+      {
+        "code": "PLY",
+        "name": "Plymouth"
+      },
+      {
+        "code": "POR",
+        "name": "Portsmouth"
+      },
+      {
+        "code": "POW",
+        "name": "Powys"
+      },
+      {
+        "code": "RDG",
+        "name": "Reading"
+      },
+      {
+        "code": "RDB",
+        "name": "Redbridge"
+      },
+      {
+        "code": "RCC",
+        "name": "Redcar and Cleveland"
+      },
+      {
+        "code": "RFW",
+        "name": "Renfrewshire"
+      },
+      {
+        "code": "RCT",
+        "name": "Rhondda Cynon Taff [Rhondda CynonTaf]"
+      },
+      {
+        "code": "RIC",
+        "name": "Richmond upon Thames"
+      },
+      {
+        "code": "RCH",
+        "name": "Rochdale"
+      },
+      {
+        "code": "ROT",
+        "name": "Rotherham"
+      },
+      {
+        "code": "RUT",
+        "name": "Rutland"
+      },
+      {
+        "code": "SLF",
+        "name": "Salford"
+      },
+      {
+        "code": "SAW",
+        "name": "Sandwell"
+      },
+      {
+        "code": "SCT",
+        "name": "Scotland"
+      },
+      {
+        "code": "SCB",
+        "name": "Scottish Borders"
+      },
+      {
+        "code": "SFT",
+        "name": "Sefton"
+      },
+      {
+        "code": "SHF",
+        "name": "Sheffield"
+      },
+      {
+        "code": "ZET",
+        "name": "Shetland Islands"
+      },
+      {
+        "code": "SHR",
+        "name": "Shropshire"
+      },
+      {
+        "code": "SLG",
+        "name": "Slough"
+      },
+      {
+        "code": "SOL",
+        "name": "Solihull"
+      },
+      {
+        "code": "SOM",
+        "name": "Somerset"
+      },
+      {
+        "code": "SAY",
+        "name": "South Ayrshire"
+      },
+      {
+        "code": "SGC",
+        "name": "South Gloucestershire"
+      },
+      {
+        "code": "SLK",
+        "name": "South Lanarkshire"
+      },
+      {
+        "code": "STY",
+        "name": "South Tyneside"
+      },
+      {
+        "code": "STH",
+        "name": "Southampton"
+      },
+      {
+        "code": "SOS",
+        "name": "Southend-on-Sea"
+      },
+      {
+        "code": "SWK",
+        "name": "Southwark"
+      },
+      {
+        "code": "SHN",
+        "name": "St. Helens"
+      },
+      {
+        "code": "STS",
+        "name": "Staffordshire"
+      },
+      {
+        "code": "STG",
+        "name": "Stirling"
+      },
+      {
+        "code": "SKP",
+        "name": "Stockport"
+      },
+      {
+        "code": "STT",
+        "name": "Stockton-on-Tees"
+      },
+      {
+        "code": "STE",
+        "name": "Stoke-on-Trent"
+      },
+      {
+        "code": "SFK",
+        "name": "Suffolk"
+      },
+      {
+        "code": "SND",
+        "name": "Sunderland"
+      },
+      {
+        "code": "SRY",
+        "name": "Surrey"
+      },
+      {
+        "code": "STN",
+        "name": "Sutton"
+      },
+      {
+        "code": "SWA",
+        "name": "Swansea [Abertawe GB-ATA]"
+      },
+      {
+        "code": "SWD",
+        "name": "Swindon"
+      },
+      {
+        "code": "TAM",
+        "name": "Tameside"
+      },
+      {
+        "code": "TFW",
+        "name": "Telford and Wrekin"
+      },
+      {
+        "code": "THR",
+        "name": "Thurrock"
+      },
+      {
+        "code": "TOB",
+        "name": "Torbay"
+      },
+      {
+        "code": "TOF",
+        "name": "Torfaen [Tor-faen]"
+      },
+      {
+        "code": "TWH",
+        "name": "Tower Hamlets"
+      },
+      {
+        "code": "TRF",
+        "name": "Trafford"
+      },
+      {
+        "code": "VGL",
+        "name": "Vale of Glamorgan, The [Bro Morgannwg GB-BMG]"
+      },
+      {
+        "code": "WKF",
+        "name": "Wakefield"
+      },
+      {
+        "code": "WLS",
+        "name": "Wales [Cymru GB-CYM]"
+      },
+      {
+        "code": "WLL",
+        "name": "Walsall"
+      },
+      {
+        "code": "WFT",
+        "name": "Waltham Forest"
+      },
+      {
+        "code": "WND",
+        "name": "Wandsworth"
+      },
+      {
+        "code": "WRT",
+        "name": "Warrington"
+      },
+      {
+        "code": "WAR",
+        "name": "Warwickshire"
+      },
+      {
+        "code": "WBK",
+        "name": "West Berkshire"
+      },
+      {
+        "code": "WDU",
+        "name": "West Dunbartonshire"
+      },
+      {
+        "code": "WLN",
+        "name": "West Lothian"
+      },
+      {
+        "code": "WNH",
+        "name": "West Northamptonshire"
+      },
+      {
+        "code": "WSX",
+        "name": "West Sussex"
+      },
+      {
+        "code": "WSM",
+        "name": "Westminster"
+      },
+      {
+        "code": "WGN",
+        "name": "Wigan"
+      },
+      {
+        "code": "WIL",
+        "name": "Wiltshire"
+      },
+      {
+        "code": "WNM",
+        "name": "Windsor and Maidenhead"
+      },
+      {
+        "code": "WRL",
+        "name": "Wirral"
+      },
+      {
+        "code": "WOK",
+        "name": "Wokingham"
+      },
+      {
+        "code": "WLV",
+        "name": "Wolverhampton"
+      },
+      {
+        "code": "WOR",
+        "name": "Worcestershire"
+      },
+      {
+        "code": "WRX",
+        "name": "Wrexham [Wrecsam GB-WRC]"
+      },
+      {
+        "code": "YOR",
+        "name": "York"
+      }
+    ]
+  },
+  "IT": {
+    "cities": [
+      "Agropoli",
+      "Alessandria",
+      "Anzio",
+      "Arpino",
+      "Assisi",
+      "Asti",
+      "Bagnolo Piemonte",
+      "Bari",
+      "Belluno",
+      "Bergamo",
+      "Bologna",
+      "Bolzano",
+      "Borgo",
+      "Brancaleone Superiore",
+      "Brescia",
+      "Brindisi",
+      "Cagliari",
+      "Campobello di Mazara",
+      "Caorle",
+      "Cassino",
+      "Castelluccio Inferiore",
+      "Catania",
+      "Centallo",
+      "Cervignano del Friuli",
+      "Cisterna di Latina",
+      "Collesano",
+      "Cologna Veneta",
+      "Corbetta",
+      "Doria",
+      "Feroleto della Chiesa",
+      "Filiano",
+      "Fiuggi",
+      "Florence",
+      "Foggia",
+      "Fonte Nuova",
+      "Forli",
+      "Frosinone",
+      "Gabicce Mare",
+      "Gallarate",
+      "Galliate",
+      "Genova",
+      "Golfo Aranci",
+      "Graffignano",
+      "Gravina in Puglia",
+      "Imperia",
+      "Ispra",
+      "Ivrea",
+      "Lamezia Terme",
+      "Latina",
+      "Lecce",
+      "Lendinara",
+      "Licata",
+      "Magliano de' Marsi",
+      "Magliano in Toscana",
+      "Male",
+      "Massa Marittima",
+      "Melissano",
+      "Messina",
+      "Milan",
+      "Modena",
+      "Moio della Civitella",
+      "Mombaruzzo",
+      "Moneglia",
+      "Montedoro",
+      "Monteodorisio",
+      "Monticelli",
+      "Morozzo",
+      "Naples",
+      "Oriolo Romano",
+      "Otranto",
+      "Oulx",
+      "Padova",
+      "Palagiano",
+      "Palermo",
+      "Parma",
+      "Perosa Argentina",
+      "Perugia",
+      "Pesaro",
+      "Petilia Policastro",
+      "Pisa",
+      "Ponte San Pietro",
+      "Pordenone",
+      "Portoferraio",
+      "Prato",
+      "Pregnana Milanese",
+      "Reggio Calabria",
+      "Ribera",
+      "Rimini",
+      "Ripa",
+      "Romana",
+      "Rome",
+      "Ronciglione",
+      "Rosa",
+      "Salerno",
+      "Saluzzo",
+      "San Benedetto del Tronto",
+      "San Mauro Cilento",
+      "San Pietro Vernotico",
+      "San Remo",
+      "San Vendemiano",
+      "Santa Giustina",
+      "Santhia",
+      "Savona",
+      "Serra Pedace",
+      "Serravalle Scrivia",
+      "Spello",
+      "Terni",
+      "Torino",
+      "Torrazza Coste",
+      "Torviscosa",
+      "Trento",
+      "Trieste",
+      "Udine",
+      "Varese",
+      "Venice",
+      "Verona",
+      "Viadana",
+      "Viddalba",
+      "Villanova d'Albenga",
+      "Villanova Mondovi",
+      "Vita",
+      "Viterbo",
+      "Vizzini",
+      "Voghera"
+    ],
+    "regions": [
+      {
+        "code": "65",
+        "name": "Abruzzo"
+      },
+      {
+        "code": "AG",
+        "name": "Agrigento"
+      },
+      {
+        "code": "AL",
+        "name": "Alessandria"
+      },
+      {
+        "code": "AN",
+        "name": "Ancona"
+      },
+      {
+        "code": "AR",
+        "name": "Arezzo"
+      },
+      {
+        "code": "AP",
+        "name": "Ascoli Piceno"
+      },
+      {
+        "code": "AT",
+        "name": "Asti"
+      },
+      {
+        "code": "AV",
+        "name": "Avellino"
+      },
+      {
+        "code": "BA",
+        "name": "Bari"
+      },
+      {
+        "code": "BT",
+        "name": "Barletta-Andria-Trani"
+      },
+      {
+        "code": "77",
+        "name": "Basilicata"
+      },
+      {
+        "code": "BL",
+        "name": "Belluno"
+      },
+      {
+        "code": "BN",
+        "name": "Benevento"
+      },
+      {
+        "code": "BG",
+        "name": "Bergamo"
+      },
+      {
+        "code": "BI",
+        "name": "Biella"
+      },
+      {
+        "code": "BO",
+        "name": "Bologna"
+      },
+      {
+        "code": "BZ",
+        "name": "Bolzano"
+      },
+      {
+        "code": "BS",
+        "name": "Brescia"
+      },
+      {
+        "code": "BR",
+        "name": "Brindisi"
+      },
+      {
+        "code": "CA",
+        "name": "Cagliari"
+      },
+      {
+        "code": "78",
+        "name": "Calabria"
+      },
+      {
+        "code": "CL",
+        "name": "Caltanissetta"
+      },
+      {
+        "code": "72",
+        "name": "Campania"
+      },
+      {
+        "code": "CB",
+        "name": "Campobasso"
+      },
+      {
+        "code": "CE",
+        "name": "Caserta"
+      },
+      {
+        "code": "CT",
+        "name": "Catania"
+      },
+      {
+        "code": "CZ",
+        "name": "Catanzaro"
+      },
+      {
+        "code": "CH",
+        "name": "Chieti"
+      },
+      {
+        "code": "CO",
+        "name": "Como"
+      },
+      {
+        "code": "CS",
+        "name": "Cosenza"
+      },
+      {
+        "code": "CR",
+        "name": "Cremona"
+      },
+      {
+        "code": "KR",
+        "name": "Crotone"
+      },
+      {
+        "code": "CN",
+        "name": "Cuneo"
+      },
+      {
+        "code": "45",
+        "name": "Emilia-Romagna"
+      },
+      {
+        "code": "EN",
+        "name": "Enna"
+      },
+      {
+        "code": "FM",
+        "name": "Fermo"
+      },
+      {
+        "code": "FE",
+        "name": "Ferrara"
+      },
+      {
+        "code": "FI",
+        "name": "Firenze"
+      },
+      {
+        "code": "FG",
+        "name": "Foggia"
+      },
+      {
+        "code": "FC",
+        "name": "Forlì-Cesena"
+      },
+      {
+        "code": "36",
+        "name": "Friuli Venezia Giulia"
+      },
+      {
+        "code": "FR",
+        "name": "Frosinone"
+      },
+      {
+        "code": "GE",
+        "name": "Genova"
+      },
+      {
+        "code": "GO",
+        "name": "Gorizia"
+      },
+      {
+        "code": "GR",
+        "name": "Grosseto"
+      },
+      {
+        "code": "IM",
+        "name": "Imperia"
+      },
+      {
+        "code": "IS",
+        "name": "Isernia"
+      },
+      {
+        "code": "AQ",
+        "name": "L'Aquila"
+      },
+      {
+        "code": "SP",
+        "name": "La Spezia"
+      },
+      {
+        "code": "LT",
+        "name": "Latina"
+      },
+      {
+        "code": "62",
+        "name": "Lazio"
+      },
+      {
+        "code": "LE",
+        "name": "Lecce"
+      },
+      {
+        "code": "LC",
+        "name": "Lecco"
+      },
+      {
+        "code": "42",
+        "name": "Liguria"
+      },
+      {
+        "code": "LI",
+        "name": "Livorno"
+      },
+      {
+        "code": "LO",
+        "name": "Lodi"
+      },
+      {
+        "code": "25",
+        "name": "Lombardia"
+      },
+      {
+        "code": "LU",
+        "name": "Lucca"
+      },
+      {
+        "code": "MC",
+        "name": "Macerata"
+      },
+      {
+        "code": "MN",
+        "name": "Mantova"
+      },
+      {
+        "code": "57",
+        "name": "Marche"
+      },
+      {
+        "code": "MS",
+        "name": "Massa-Carrara"
+      },
+      {
+        "code": "MT",
+        "name": "Matera"
+      },
+      {
+        "code": "ME",
+        "name": "Messina"
+      },
+      {
+        "code": "MI",
+        "name": "Milano"
+      },
+      {
+        "code": "MO",
+        "name": "Modena"
+      },
+      {
+        "code": "67",
+        "name": "Molise"
+      },
+      {
+        "code": "MB",
+        "name": "Monza e Brianza"
+      },
+      {
+        "code": "NA",
+        "name": "Napoli"
+      },
+      {
+        "code": "NO",
+        "name": "Novara"
+      },
+      {
+        "code": "NU",
+        "name": "Nuoro"
+      },
+      {
+        "code": "OR",
+        "name": "Oristano"
+      },
+      {
+        "code": "PD",
+        "name": "Padova"
+      },
+      {
+        "code": "PA",
+        "name": "Palermo"
+      },
+      {
+        "code": "PR",
+        "name": "Parma"
+      },
+      {
+        "code": "PV",
+        "name": "Pavia"
+      },
+      {
+        "code": "PG",
+        "name": "Perugia"
+      },
+      {
+        "code": "PU",
+        "name": "Pesaro e Urbino"
+      },
+      {
+        "code": "PE",
+        "name": "Pescara"
+      },
+      {
+        "code": "PC",
+        "name": "Piacenza"
+      },
+      {
+        "code": "21",
+        "name": "Piemonte"
+      },
+      {
+        "code": "PI",
+        "name": "Pisa"
+      },
+      {
+        "code": "PT",
+        "name": "Pistoia"
+      },
+      {
+        "code": "PN",
+        "name": "Pordenone"
+      },
+      {
+        "code": "PZ",
+        "name": "Potenza"
+      },
+      {
+        "code": "PO",
+        "name": "Prato"
+      },
+      {
+        "code": "75",
+        "name": "Puglia"
+      },
+      {
+        "code": "RG",
+        "name": "Ragusa"
+      },
+      {
+        "code": "RA",
+        "name": "Ravenna"
+      },
+      {
+        "code": "RC",
+        "name": "Reggio Calabria"
+      },
+      {
+        "code": "RE",
+        "name": "Reggio Emilia"
+      },
+      {
+        "code": "RI",
+        "name": "Rieti"
+      },
+      {
+        "code": "RN",
+        "name": "Rimini"
+      },
+      {
+        "code": "RM",
+        "name": "Roma"
+      },
+      {
+        "code": "RO",
+        "name": "Rovigo"
+      },
+      {
+        "code": "SA",
+        "name": "Salerno"
+      },
+      {
+        "code": "88",
+        "name": "Sardegna"
+      },
+      {
+        "code": "SS",
+        "name": "Sassari"
+      },
+      {
+        "code": "SV",
+        "name": "Savona"
+      },
+      {
+        "code": "82",
+        "name": "Sicilia"
+      },
+      {
+        "code": "SI",
+        "name": "Siena"
+      },
+      {
+        "code": "SR",
+        "name": "Siracusa"
+      },
+      {
+        "code": "SO",
+        "name": "Sondrio"
+      },
+      {
+        "code": "SU",
+        "name": "Sud Sardegna"
+      },
+      {
+        "code": "TA",
+        "name": "Taranto"
+      },
+      {
+        "code": "TE",
+        "name": "Teramo"
+      },
+      {
+        "code": "TR",
+        "name": "Terni"
+      },
+      {
+        "code": "TO",
+        "name": "Torino"
+      },
+      {
+        "code": "52",
+        "name": "Toscana"
+      },
+      {
+        "code": "TP",
+        "name": "Trapani"
+      },
+      {
+        "code": "32",
+        "name": "Trentino-Alto Adige"
+      },
+      {
+        "code": "TN",
+        "name": "Trento"
+      },
+      {
+        "code": "TV",
+        "name": "Treviso"
+      },
+      {
+        "code": "TS",
+        "name": "Trieste"
+      },
+      {
+        "code": "UD",
+        "name": "Udine"
+      },
+      {
+        "code": "55",
+        "name": "Umbria"
+      },
+      {
+        "code": "23",
+        "name": "Valle d'Aosta"
+      },
+      {
+        "code": "VA",
+        "name": "Varese"
+      },
+      {
+        "code": "34",
+        "name": "Veneto"
+      },
+      {
+        "code": "VE",
+        "name": "Venezia"
+      },
+      {
+        "code": "VB",
+        "name": "Verbano-Cusio-Ossola"
+      },
+      {
+        "code": "VC",
+        "name": "Vercelli"
+      },
+      {
+        "code": "VR",
+        "name": "Verona"
+      },
+      {
+        "code": "VV",
+        "name": "Vibo Valentia"
+      },
+      {
+        "code": "VI",
+        "name": "Vicenza"
+      },
+      {
+        "code": "VT",
+        "name": "Viterbo"
+      }
+    ]
+  }
+}
