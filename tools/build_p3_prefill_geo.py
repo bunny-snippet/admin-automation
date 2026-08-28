@@ -5,7 +5,19 @@ import json
 from pathlib import Path
 
 
-DEFAULT_COUNTRIES = ("DE", "ES", "CZ", "BE", "FR", "IT", "GB")
+DEFAULT_COUNTRIES = (
+    "DE",
+    "ES",
+    "CZ",
+    "BE",
+    "FR",
+    "IT",
+    "GB",
+    "DK",
+    "AU",
+    "CA",
+    "US",
+)
 
 
 def main() -> None:

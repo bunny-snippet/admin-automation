@@ -28,7 +28,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from .models import (
     BootstrapAudit, ClientAccess, DesktopRelease, ExtensionPackage, ProfileActivity, ProfileDomainActivity, Provider, ProxyCountryFile,
-    ProfileCreateLease, ProfileCreateQueue, ProxyGenerationJob, ProxyReservation,
+    ProfileCreateLease, ProfileCreateQueue, ProxyGenerationJob, ProxyPoolTarget, ProxyReservation,
     ProxyRegionCatalog,
 )
 from .release_updates import (
@@ -1009,8 +1009,10 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
             or not requested_count <= candidate_count <= 50
         ):
             raise ValueError("Invalid proxy request")
-        if provider_code != "P3":
+        if provider_code not in {"P2", "P3"}:
             city = ""
+        if provider_code == "P2" and city and not region:
+            raise ValueError("P2 city targeting requires a region")
         # Massive resolves city targeting independently and documents that a
         # city takes precedence over subdivision. Store city pools without a
         # region so the same ready inventory serves both country+city and
@@ -1027,6 +1029,15 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
             active=True,
         ).exists():
             raise ValueError("Unsupported provider region")
+        if provider_code == "P2" and city and not ProxyPoolTarget.objects.filter(
+            config_bundle=client.config_bundle,
+            provider_code="P2",
+            country_code=country_code,
+            region=region,
+            city=city,
+            active=True,
+        ).exists():
+            raise ValueError("Unsupported P2 city")
     except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError,
             signing.BadSignature, signing.SignatureExpired, ClientAccess.DoesNotExist):
         return _json_response({"allowed": False, "message": "Access denied."}, status=403)
@@ -1042,7 +1053,7 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
         reservations = reserve_pool_proxies(
             client=client, job=job, provider_code=provider_code, country_code=country_code, region=region, city=city,
         )
-        if len(reservations) < candidate_count:
+        if len(reservations) < candidate_count and not region and not city:
             reservations += reserve_static_proxies(
                 client=client, job=job, provider_code=provider_code, country_code=country_code, region=region, city=city,
             )
@@ -1097,6 +1108,60 @@ def proxy_job_detail(request: HttpRequest, job_id: int) -> JsonResponse:
             ClientAccess.DoesNotExist, ProxyGenerationJob.DoesNotExist):
         return _json_response({"allowed": False, "message": "Access denied."}, status=403)
     return _json_response({"allowed": True, "job": _job_payload(job)})
+
+
+@require_GET
+def proxy_cities(
+    request: HttpRequest,
+    provider_code: str,
+    country_code: str,
+    region_code: str,
+) -> JsonResponse:
+    """Return only pre-generated, currently ready cities for this client."""
+    try:
+        client = _authenticated_client(request)
+        provider = str(provider_code or "").strip().upper()
+        country, region, _city = _decode_p3_legacy_location(
+            provider,
+            country_code,
+            region_code,
+            "",
+        )
+        if provider != "P2" or not country or not region:
+            raise ValueError("Unsupported proxy city request")
+        if not ProxyRegionCatalog.objects.filter(
+            provider__code="P2",
+            provider__active=True,
+            country_code=country,
+            region_code=region,
+            active=True,
+        ).exists():
+            raise ValueError("Unsupported provider region")
+        cities = list(
+            ProxyPoolTarget.objects.filter(
+                config_bundle=client.config_bundle,
+                provider_code="P2",
+                country_code=country,
+                region=region,
+                active=True,
+                city__gt="",
+                entries__state="available",
+            )
+            .order_by("city")
+            .values_list("city", flat=True)
+            .distinct()[:10000]
+        )
+    except (
+        ValueError,
+        signing.BadSignature,
+        signing.SignatureExpired,
+        ClientAccess.DoesNotExist,
+    ):
+        return _json_response(
+            {"allowed": False, "message": "Access denied."},
+            status=403,
+        )
+    return _json_response({"allowed": True, "cities": cities})
 
 
 @csrf_exempt
