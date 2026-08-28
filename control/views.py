@@ -16,9 +16,10 @@ from datetime import timedelta, timezone as datetime_timezone
 from django.conf import settings
 from django.core import signing
 from django.core.cache import cache
+from django.core.exceptions import ValidationError
 from django.db.models import Prefetch, Q
 from django.db import transaction
-from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.http import FileResponse, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -26,9 +27,15 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from .models import (
-    BootstrapAudit, ClientAccess, ExtensionPackage, ProfileActivity, ProfileDomainActivity, Provider, ProxyCountryFile,
+    BootstrapAudit, ClientAccess, DesktopRelease, ExtensionPackage, ProfileActivity, ProfileDomainActivity, Provider, ProxyCountryFile,
     ProfileCreateLease, ProfileCreateQueue, ProxyGenerationJob, ProxyReservation,
     ProxyRegionCatalog,
+)
+from .release_updates import (
+    desktop_update_manifest,
+    release_applies_to_client,
+    select_desktop_update,
+    verify_release_signature,
 )
 
 
@@ -363,6 +370,9 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
     reported_ip: str | None = None
     app_version = ""
     device_id = ""
+    app_build = 0
+    app_channel = ""
+    update_protocol = 0
     try:
         if settings.TRUST_APP_REPORTED_IPV4:
             # In approved app-reported mode the transport address is audit-only.
@@ -378,6 +388,16 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
         reported_ip = _normalized_ip(body.get("reported_ipv4"))
         app_version = str(body.get("app_version") or "")
         device_id = str(body.get("device_id") or "").strip()[:128]
+        app_build = int(body.get("app_build") or 0)
+        app_channel = str(body.get("app_channel") or "").strip()[:16]
+        update_protocol = int(body.get("update_protocol") or 0)
+        if (
+            app_build < 0
+            or app_build > 9_223_372_036_854_775_807
+            or update_protocol < 0
+            or update_protocol > 1_000
+        ):
+            raise ValueError("Update metadata must be non-negative")
         if ipaddress.ip_address(reported_ip).version != 4:
             return _denied(
                 "reported-ipv4-required",
@@ -501,32 +521,40 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
         device_id=device_id,
         client=client,
     )
-    return _json_response(
-        {
-            "allowed": True,
-            "schema_version": 1,
-            "config_version": client.config_bundle.version,
-            "expires_in": settings.BOOTSTRAP_TOKEN_MAX_AGE,
-            "access_token": token,
-            "tubelight_config": config,
-            "assignment": {
-                "browser_group_id": group_id,
-                "browser_group_name": group_name,
-                "profile_name": profile_name,
-            },
-            "catalog": {"providers": _catalog(
-                flatten_p3_locations=_legacy_p3_location_catalog(
-                    client,
-                    app_version,
-                )
-            ), "extensions": [
-                {"id": item.pk, "name": item.name, "filename": item.filename,
-                 "version": item.version, "sha256": item.package_sha256,
-                 "is_top": item.is_top, "status": item.status}
-                for item in ExtensionPackage.objects.exclude(package_ciphertext="")
-            ]},
-        }
-    )
+    response_payload = {
+        "allowed": True,
+        "schema_version": 1,
+        "config_version": client.config_bundle.version,
+        "expires_in": settings.BOOTSTRAP_TOKEN_MAX_AGE,
+        "access_token": token,
+        "tubelight_config": config,
+        "assignment": {
+            "browser_group_id": group_id,
+            "browser_group_name": group_name,
+            "profile_name": profile_name,
+        },
+        "catalog": {"providers": _catalog(
+            flatten_p3_locations=_legacy_p3_location_catalog(
+                client,
+                app_version,
+            )
+        ), "extensions": [
+            {"id": item.pk, "name": item.name, "filename": item.filename,
+             "version": item.version, "sha256": item.package_sha256,
+             "is_top": item.is_top, "status": item.status}
+            for item in ExtensionPackage.objects.exclude(package_ciphertext="")
+        ]},
+    }
+    if update_protocol >= 1:
+        # ClientAccess remains authoritative, and a mismatched executable gets
+        # no manifest instead of a manifest it would reject for another channel.
+        release = None
+        if app_channel == client.release_channel:
+            release = select_desktop_update(client=client, app_build=app_build)
+        response_payload["desktop_update"] = (
+            desktop_update_manifest(release) if release is not None else None
+        )
+    return _json_response(response_payload)
 
 
 def _bearer_token(request: HttpRequest) -> str:
@@ -900,6 +928,52 @@ def extension_package(request: HttpRequest, package_id: int) -> HttpResponse:
     response["Content-Disposition"] = f'attachment; filename="{package.filename}"'
     response["X-Content-SHA256"] = package.package_sha256
     response["Cache-Control"] = "no-store"
+    return response
+
+
+@require_GET
+def desktop_release_download(request: HttpRequest, release_id: int) -> HttpResponse:
+    try:
+        client = _authenticated_client(request)
+        release = DesktopRelease.objects.get(
+            pk=release_id,
+            status=DesktopRelease.STATUS_PUBLISHED,
+            channel=client.release_channel,
+        )
+        if not release_applies_to_client(release, client):
+            raise DesktopRelease.DoesNotExist
+        verify_release_signature(release)
+        if not release.artifact:
+            raise DesktopRelease.DoesNotExist
+        release.artifact.open("rb")
+    except (
+        OSError,
+        ValidationError,
+        ValueError,
+        signing.BadSignature,
+        signing.SignatureExpired,
+        ClientAccess.DoesNotExist,
+        DesktopRelease.DoesNotExist,
+    ):
+        return _json_response(
+            {"allowed": False, "message": "Access denied."},
+            status=403,
+        )
+
+    filename = (
+        release.original_filename.replace("\\", "/").rsplit("/", 1)[-1]
+        or f"quest-automation-{release.version}.exe"
+    )
+    response = FileResponse(
+        release.artifact,
+        as_attachment=True,
+        filename=filename,
+        content_type="application/vnd.microsoft.portable-executable",
+    )
+    response["Content-Length"] = str(release.artifact_size)
+    response["X-Content-SHA256"] = release.artifact_sha256
+    response["Cache-Control"] = "private, no-store"
+    response["X-Content-Type-Options"] = "nosniff"
     return response
 
 

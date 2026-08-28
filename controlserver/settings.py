@@ -161,6 +161,12 @@ STATIC_URL = "/static/"
 STATIC_ROOT = RUNTIME_DATA_DIR / "staticfiles"
 MEDIA_URL = "media/"
 MEDIA_ROOT = RUNTIME_DATA_DIR / "media"
+desktop_release_root_override = os.getenv("DESKTOP_RELEASE_ROOT", "").strip()
+DESKTOP_RELEASE_ROOT = (
+    Path(desktop_release_root_override).resolve()
+    if desktop_release_root_override
+    else RUNTIME_DATA_DIR / "private-desktop-releases"
+)
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
@@ -289,6 +295,9 @@ CELERY_BEAT_SCHEDULE = {
     },
 }
 DATA_UPLOAD_MAX_MEMORY_SIZE = 1024 * 1024
+DESKTOP_RELEASE_MAX_BYTES = int(
+    os.getenv("DESKTOP_RELEASE_MAX_BYTES", str(200 * 1024 * 1024))
+)
 
 if TRUST_PROXY_HEADERS:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")

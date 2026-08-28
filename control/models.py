@@ -3,21 +3,37 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import logging
 import uuid
 from typing import Any
 
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.core.validators import RegexValidator
-from django.db import models
+from django.core.validators import FileExtensionValidator, MinValueValidator, RegexValidator
+from django.db import models, transaction
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
 
 from .crypto import decrypt_json, decrypt_text, encrypt_json, encrypt_text
+from .storage import private_desktop_release_storage
 
 
 catalog_id_validator = RegexValidator(
     regex=r"^[A-Za-z0-9_-]{1,32}$",
     message="Use only letters, numbers, underscores, and hyphens.",
 )
+
+desktop_version_validator = RegexValidator(
+    regex=r"\A[0-9]+(?:\.[0-9]+){2,3}\Z",
+    message="Use a numeric dotted version such as 1.7.35.",
+)
+
+logger = logging.getLogger("control")
+
+
+def desktop_release_artifact_path(instance, filename: str) -> str:
+    """Store release binaries outside any predictable/public media path."""
+    return f"desktop-releases/{uuid.uuid4().hex}.exe"
 
 
 class ConfigBundle(models.Model):
@@ -53,6 +69,13 @@ class ConfigBundle(models.Model):
 
 
 class ClientAccess(models.Model):
+    RELEASE_CHANNEL_PUBLIC = "public"
+    RELEASE_CHANNEL_TESTING = "testing"
+    RELEASE_CHANNEL_CHOICES = (
+        (RELEASE_CHANNEL_PUBLIC, "Public"),
+        (RELEASE_CHANNEL_TESTING, "Testing"),
+    )
+
     name = models.CharField(max_length=120)
     ipv4 = models.GenericIPAddressField(protocol="IPv4")
     device_id = models.CharField(
@@ -74,6 +97,12 @@ class ClientAccess(models.Model):
         ConfigBundle,
         on_delete=models.PROTECT,
         related_name="clients",
+    )
+    release_channel = models.CharField(
+        max_length=16,
+        choices=RELEASE_CHANNEL_CHOICES,
+        default=RELEASE_CHANNEL_PUBLIC,
+        help_text="Desktop release channel assigned by an administrator.",
     )
     notes = models.TextField(blank=True)
     last_seen_at = models.DateTimeField(blank=True, null=True)
@@ -315,6 +344,337 @@ class ExtensionPackage(models.Model):
         if not self.package_ciphertext:
             return b""
         return base64.b64decode(decrypt_text(self.package_ciphertext))
+
+
+class DesktopRelease(models.Model):
+    CHANNEL_PUBLIC = "public"
+    CHANNEL_TESTING = "testing"
+    CHANNEL_CHOICES = (
+        (CHANNEL_PUBLIC, "Public"),
+        (CHANNEL_TESTING, "Testing"),
+    )
+
+    MODE_OPTIONAL = "optional"
+    MODE_SILENT = "silent"
+    MODE_MANDATORY = "mandatory"
+    MODE_CHOICES = (
+        (MODE_OPTIONAL, "Optional"),
+        (MODE_SILENT, "Silent automatic install"),
+        (MODE_MANDATORY, "Mandatory automatic install"),
+    )
+
+    STATUS_DRAFT = "draft"
+    STATUS_PUBLISHED = "published"
+    STATUS_REVOKED = "revoked"
+    STATUS_CHOICES = (
+        (STATUS_DRAFT, "Draft"),
+        (STATUS_PUBLISHED, "Published"),
+        (STATUS_REVOKED, "Revoked"),
+    )
+
+    channel = models.CharField(
+        max_length=16,
+        choices=CHANNEL_CHOICES,
+        default=CHANNEL_PUBLIC,
+    )
+    version = models.CharField(
+        max_length=40,
+        validators=[desktop_version_validator],
+        help_text="Numeric dotted version, for example 1.7.35.",
+    )
+    build_number = models.PositiveBigIntegerField(
+        help_text="Monotonically increasing build number within this channel.",
+        validators=[MinValueValidator(1)],
+    )
+    mode = models.CharField(
+        max_length=16,
+        choices=MODE_CHOICES,
+        default=MODE_OPTIONAL,
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=STATUS_CHOICES,
+        default=STATUS_DRAFT,
+        editable=False,
+    )
+    target_offices = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Office names allowed to receive this release; [] targets all offices.",
+    )
+    target_device_ids = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Device IDs allowed to receive this release; [] targets all devices.",
+    )
+    artifact = models.FileField(
+        storage=private_desktop_release_storage,
+        upload_to=desktop_release_artifact_path,
+        validators=[FileExtensionValidator(allowed_extensions=("exe",))],
+    )
+    original_filename = models.CharField(
+        max_length=255,
+        blank=True,
+        editable=False,
+    )
+    artifact_sha256 = models.CharField(
+        max_length=64,
+        blank=True,
+        editable=False,
+    )
+    artifact_size = models.PositiveBigIntegerField(default=0, editable=False)
+    signature_b64 = models.TextField(
+        blank=True,
+        default="",
+        help_text="Detached Ed25519 signature of the canonical manifest payload.",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="desktop_releases",
+    )
+    published_at = models.DateTimeField(blank=True, null=True, editable=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-build_number", "-pk")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("channel", "build_number"),
+                name="unique_desktop_release_build",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=("channel", "status", "-build_number"),
+                name="release_lookup_idx",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.version} (build {self.build_number}, {self.channel})"
+
+    @staticmethod
+    def _clean_target_list(value: Any, field_name: str) -> list[str]:
+        if value in (None, ""):
+            return []
+        if not isinstance(value, list):
+            raise ValidationError({field_name: "Enter a JSON list of strings."})
+        cleaned: list[str] = []
+        for item in value:
+            if not isinstance(item, str):
+                raise ValidationError({field_name: "Every list item must be a string."})
+            item = item.strip()
+            if not item or len(item) > 160:
+                raise ValidationError(
+                    {field_name: "List items must be non-empty and at most 160 characters."}
+                )
+            if item not in cleaned:
+                cleaned.append(item)
+        return cleaned
+
+    def clean(self) -> None:
+        super().clean()
+        self.target_offices = self._clean_target_list(
+            self.target_offices,
+            "target_offices",
+        )
+        self.target_device_ids = self._clean_target_list(
+            self.target_device_ids,
+            "target_device_ids",
+        )
+        if not self.pk and self.status != self.STATUS_DRAFT:
+            raise ValidationError({"status": "A new release must start as a draft."})
+
+    def save(self, *args, **kwargs):
+        from .release_updates import (
+            artifact_sha256_and_size,
+            verify_artifact_integrity,
+            verify_release_signature,
+        )
+
+        existing = None
+        if self.pk:
+            existing = type(self).objects.filter(pk=self.pk).first()
+        replaced_artifact_name = ""
+
+        desktop_version_validator(self.version)
+        if int(self.build_number) < 1:
+            raise ValidationError({"build_number": "Build number must be at least 1."})
+        if self.channel not in dict(self.CHANNEL_CHOICES):
+            raise ValidationError({"channel": "Unsupported release channel."})
+        if self.mode not in dict(self.MODE_CHOICES):
+            raise ValidationError({"mode": "Unsupported release mode."})
+        if self.status not in dict(self.STATUS_CHOICES):
+            raise ValidationError({"status": "Unsupported release status."})
+        if existing is None and self.status != self.STATUS_DRAFT:
+            raise ValidationError({"status": "A new release must start as a draft."})
+        if (
+            existing is not None
+            and existing.status == self.STATUS_DRAFT
+            and self.status not in {self.STATUS_DRAFT, self.STATUS_PUBLISHED}
+        ):
+            raise ValidationError(
+                {"status": "A draft can only remain a draft or be published."}
+            )
+        self.target_offices = self._clean_target_list(
+            self.target_offices,
+            "target_offices",
+        )
+        self.target_device_ids = self._clean_target_list(
+            self.target_device_ids,
+            "target_device_ids",
+        )
+        self.signature_b64 = str(self.signature_b64 or "").strip()
+
+        artifact_changed = bool(
+            self.artifact
+            and (
+                existing is None
+                or not getattr(self.artifact, "_committed", True)
+                or self.artifact.name != existing.artifact.name
+            )
+        )
+        if artifact_changed:
+            if existing is not None and existing.status == self.STATUS_DRAFT:
+                replaced_artifact_name = str(existing.artifact.name or "")
+            self.original_filename = str(self.artifact.name).replace("\\", "/").rsplit("/", 1)[-1]
+            self.artifact_sha256, self.artifact_size = artifact_sha256_and_size(
+                self.artifact
+            )
+            max_bytes = max(1, int(settings.DESKTOP_RELEASE_MAX_BYTES))
+            if self.artifact_size > max_bytes:
+                raise ValidationError(
+                    {"artifact": f"The release EXE exceeds the {max_bytes}-byte limit."}
+                )
+            source = getattr(self.artifact, "file", self.artifact)
+            try:
+                position = source.tell()
+            except (AttributeError, OSError):
+                position = 0
+            try:
+                source.seek(0)
+                header = source.read(2)
+            except (AttributeError, OSError) as exc:
+                raise ValidationError(
+                    {"artifact": "The release artifact could not be read."}
+                ) from exc
+            finally:
+                try:
+                    source.seek(position)
+                except (AttributeError, OSError):
+                    pass
+            if header != b"MZ":
+                raise ValidationError(
+                    {"artifact": "The release artifact is not a Windows executable."}
+                )
+        elif existing is not None:
+            # Hash and size are derived fields and never caller-controlled.
+            self.original_filename = existing.original_filename
+            self.artifact_sha256 = existing.artifact_sha256
+            self.artifact_size = existing.artifact_size
+
+        artifact_identity_fields = (
+            "channel",
+            "version",
+            "build_number",
+            "artifact",
+            "original_filename",
+            "artifact_sha256",
+            "artifact_size",
+            "signature_b64",
+        )
+        if existing is not None and existing.status in {
+            self.STATUS_PUBLISHED,
+            self.STATUS_REVOKED,
+        }:
+            immutable_fields = artifact_identity_fields
+            if existing.status == self.STATUS_REVOKED:
+                immutable_fields += (
+                    "mode",
+                    "target_offices",
+                    "target_device_ids",
+                )
+            changed = [
+                field
+                for field in immutable_fields
+                if getattr(self, field) != getattr(existing, field)
+            ]
+            if changed:
+                raise ValidationError(
+                    "This release's immutable fields cannot be changed; create a new release instead."
+                )
+            allowed_statuses = (
+                {self.STATUS_PUBLISHED, self.STATUS_REVOKED}
+                if existing.status == self.STATUS_PUBLISHED
+                else {self.STATUS_REVOKED}
+            )
+            if self.status not in allowed_statuses:
+                raise ValidationError({"status": "This release status transition is not allowed."})
+
+        publishing = (
+            self.status == self.STATUS_PUBLISHED
+            and (existing is None or existing.status != self.STATUS_PUBLISHED)
+        )
+        if publishing:
+            if existing is None:
+                raise ValidationError({"status": "Save the release as a draft before publishing."})
+            if type(self).objects.filter(
+                channel=self.channel,
+                build_number__gt=self.build_number,
+            ).exclude(status=self.STATUS_DRAFT).exists():
+                raise ValidationError(
+                    {
+                        "build_number": (
+                            "A higher build has already been published or revoked "
+                            "in this channel."
+                        )
+                    }
+                )
+            verify_artifact_integrity(self)
+            verify_release_signature(self)
+
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None:
+            expanded = set(update_fields)
+            if artifact_changed:
+                expanded.update(
+                    {"artifact", "original_filename", "artifact_sha256", "artifact_size"}
+                )
+            kwargs["update_fields"] = tuple(expanded)
+        result = super().save(*args, **kwargs)
+        if replaced_artifact_name and replaced_artifact_name != self.artifact.name:
+            storage = existing.artifact.storage
+            transaction.on_commit(
+                lambda: _delete_unreferenced_desktop_artifact(
+                    storage,
+                    replaced_artifact_name,
+                )
+            )
+        return result
+
+
+def _delete_unreferenced_desktop_artifact(storage, name: str) -> None:
+    if not name or DesktopRelease.objects.filter(artifact=name).exists():
+        return
+    try:
+        storage.delete(name)
+    except (OSError, ValueError):
+        logger.exception("Could not remove unused desktop release artifact %s", name)
+
+
+@receiver(post_delete, sender=DesktopRelease)
+def cleanup_deleted_draft_artifact(sender, instance, **kwargs) -> None:
+    if instance.status != DesktopRelease.STATUS_DRAFT or not instance.artifact:
+        return
+    storage = instance.artifact.storage
+    name = str(instance.artifact.name or "")
+    transaction.on_commit(
+        lambda: _delete_unreferenced_desktop_artifact(storage, name)
+    )
 
 
 class ProxyPoolTarget(models.Model):

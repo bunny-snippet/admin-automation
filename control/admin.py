@@ -20,7 +20,8 @@ from django.urls import path, reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
-from .models import (BootstrapAudit, ClientAccess, ConfigBundle, ExtensionPackage, MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyInventoryAlert, OfficeAuditRequest, ProxyReservation, ProfileActivity, OfficeProfileAudit, ProfileDomainActivity, OfficeAuditDomain, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry, ProxyRegionCatalog, SubAdminAccount, SubAdminDomainExclusion, SubAdminScopeExclusion, ClientAccessIP, YSBridgeAgent, YSBridgeCommand)
+from .models import (BootstrapAudit, ClientAccess, ConfigBundle, DesktopRelease, ExtensionPackage, MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyInventoryAlert, OfficeAuditRequest, ProxyReservation, ProfileActivity, OfficeProfileAudit, ProfileDomainActivity, OfficeAuditDomain, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry, ProxyRegionCatalog, SubAdminAccount, SubAdminDomainExclusion, SubAdminScopeExclusion, ClientAccessIP, YSBridgeAgent, YSBridgeCommand)
+from .release_updates import canonical_release_payload
 from .tasks import queue_refill_proxy_pool
 
 
@@ -446,10 +447,11 @@ class ClientAccessAdmin(admin.ModelAdmin):
         "system_number",
         "profile_name",
         "config_bundle",
+        "release_channel",
         "active",
         "last_seen_at",
     )
-    list_filter = ("active", "office_name", "config_bundle")
+    list_filter = ("active", "release_channel", "office_name", "config_bundle")
     search_fields = (
         "name",
         "ipv4",
@@ -560,6 +562,252 @@ class ExtensionPackageAdmin(admin.ModelAdmin):
     list_display = ("name", "filename", "version", "status", "is_top", "updated_at")
     list_editable = ("status", "is_top")
     readonly_fields = ("package_sha256", "updated_at")
+
+
+class DesktopReleaseForm(forms.ModelForm):
+    class Meta:
+        model = DesktopRelease
+        fields = (
+            "channel",
+            "version",
+            "build_number",
+            "mode",
+            "target_offices",
+            "target_device_ids",
+            "artifact",
+            "signature_b64",
+        )
+        widgets = {
+            "target_offices": forms.Textarea(attrs={"rows": 4, "cols": 80}),
+            "target_device_ids": forms.Textarea(attrs={"rows": 4, "cols": 80}),
+            "signature_b64": forms.Textarea(attrs={"rows": 4, "cols": 100}),
+            # ClearableFileInput reads FieldFile.url while rendering. Private
+            # release storage intentionally has no URL, and the adjacent
+            # original_filename field provides the current-file label.
+            "artifact": forms.FileInput(),
+        }
+
+    def clean_artifact(self):
+        upload = self.cleaned_data.get("artifact")
+        if not self.instance.pk and not upload:
+            raise forms.ValidationError("Upload a Windows EXE release artifact.")
+        if not upload or getattr(upload, "_committed", False):
+            return upload
+        if not str(upload.name or "").lower().endswith(".exe"):
+            raise forms.ValidationError("The release artifact must be an EXE file.")
+        max_bytes = max(1, int(settings.DESKTOP_RELEASE_MAX_BYTES))
+        if int(upload.size) > max_bytes:
+            raise forms.ValidationError(
+                f"The EXE must be {max_bytes // (1024 * 1024)} MB or smaller."
+            )
+        position = upload.tell()
+        try:
+            upload.seek(0)
+            if upload.read(2) != b"MZ":
+                raise forms.ValidationError(
+                    "The uploaded file does not have a Windows executable header."
+                )
+        finally:
+            upload.seek(position)
+        return upload
+
+
+@admin.register(DesktopRelease)
+class DesktopReleaseAdmin(admin.ModelAdmin):
+    form = DesktopReleaseForm
+    actions = ("publish_releases", "revoke_releases")
+    list_display = (
+        "version",
+        "build_number",
+        "channel",
+        "mode",
+        "status",
+        "scope_summary",
+        "artifact_size",
+        "published_at",
+    )
+    list_filter = ("channel", "mode", "status")
+    search_fields = (
+        "version",
+        "artifact_sha256",
+        "original_filename",
+        "target_offices",
+        "target_device_ids",
+    )
+    readonly_fields = (
+        "status",
+        "original_filename",
+        "artifact_sha256",
+        "artifact_size",
+        "artifact_reference",
+        "canonical_payload",
+        "created_by",
+        "published_at",
+        "created_at",
+        "updated_at",
+    )
+    fieldsets = (
+        (
+            "Release identity",
+            {
+                "fields": (
+                    "channel",
+                    "version",
+                    "build_number",
+                    "artifact",
+                    "original_filename",
+                    "artifact_sha256",
+                    "artifact_size",
+                )
+            },
+        ),
+        (
+            "Rollout",
+            {"fields": ("mode", "target_offices", "target_device_ids", "status")},
+        ),
+        (
+            "Offline Ed25519 signature",
+            {
+                "fields": ("canonical_payload", "signature_b64"),
+                "description": (
+                    "Save the draft first, sign the exact canonical payload with the "
+                    "offline release key, paste the Base64 signature, save, then use "
+                    "the Publish action."
+                ),
+            },
+        ),
+        (
+            "Audit",
+            {
+                "fields": ("created_by", "published_at", "created_at", "updated_at"),
+                "classes": ("collapse",),
+            },
+        ),
+    )
+
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+        actions.pop("delete_selected", None)
+        return actions
+
+    def get_readonly_fields(self, request, obj=None):
+        fields = list(super().get_readonly_fields(request, obj))
+        if obj and obj.status in {
+            DesktopRelease.STATUS_PUBLISHED,
+            DesktopRelease.STATUS_REVOKED,
+        }:
+            fields.extend(
+                (
+                    "channel",
+                    "version",
+                    "build_number",
+                    "signature_b64",
+                )
+            )
+        if obj and obj.status == DesktopRelease.STATUS_REVOKED:
+            fields.extend(("mode", "target_offices", "target_device_ids"))
+        return tuple(dict.fromkeys(fields))
+
+    def get_fieldsets(self, request, obj=None):
+        fieldsets = super().get_fieldsets(request, obj)
+        if not obj or obj.status == DesktopRelease.STATUS_DRAFT:
+            return fieldsets
+        private_fieldsets = []
+        for title, options in fieldsets:
+            copied = dict(options)
+            copied["fields"] = tuple(
+                "artifact_reference" if field == "artifact" else field
+                for field in options.get("fields", ())
+            )
+            private_fieldsets.append((title, copied))
+        return tuple(private_fieldsets)
+
+    def save_model(self, request, obj, form, change):
+        if not obj.pk:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
+
+    def has_delete_permission(self, request, obj=None):
+        if obj is not None and obj.status != DesktopRelease.STATUS_DRAFT:
+            return False
+        return super().has_delete_permission(request, obj)
+
+    @admin.display(description="Scope")
+    def scope_summary(self, obj):
+        offices = len(obj.target_offices or [])
+        devices = len(obj.target_device_ids or [])
+        if not offices and not devices:
+            return "All assigned devices"
+        return f"{offices or 'all'} office(s), {devices or 'all'} device(s)"
+
+    @admin.display(description="Private release artifact")
+    def artifact_reference(self, obj):
+        if not obj or not obj.artifact:
+            return "No artifact"
+        return obj.original_filename or "Stored private executable"
+
+    @admin.display(description="Canonical signed payload")
+    def canonical_payload(self, obj):
+        if not obj or not obj.pk:
+            return "Save the draft to calculate its SHA-256 and canonical payload."
+        return canonical_release_payload(obj).decode("utf-8")
+
+    @admin.action(description="Publish selected signed release(s)")
+    def publish_releases(self, request, queryset):
+        published = 0
+        for selected in queryset:
+            try:
+                with transaction.atomic():
+                    release = DesktopRelease.objects.select_for_update().get(
+                        pk=selected.pk
+                    )
+                    if release.status != DesktopRelease.STATUS_DRAFT:
+                        raise ValidationError("Only draft releases can be published.")
+                    release.status = DesktopRelease.STATUS_PUBLISHED
+                    release.published_at = timezone.now()
+                    release.save(
+                        update_fields=("status", "published_at", "updated_at")
+                    )
+                published += 1
+            except (OSError, ValidationError) as exc:
+                self.message_user(
+                    request,
+                    f"Release {selected}: {exc}",
+                    level=messages.ERROR,
+                )
+        if published:
+            self.message_user(
+                request,
+                f"Published {published} signed desktop release(s).",
+                level=messages.SUCCESS,
+            )
+
+    @admin.action(description="Revoke selected published release(s)")
+    def revoke_releases(self, request, queryset):
+        revoked = 0
+        for selected in queryset:
+            try:
+                with transaction.atomic():
+                    release = DesktopRelease.objects.select_for_update().get(
+                        pk=selected.pk
+                    )
+                    if release.status != DesktopRelease.STATUS_PUBLISHED:
+                        raise ValidationError("Only published releases can be revoked.")
+                    release.status = DesktopRelease.STATUS_REVOKED
+                    release.save(update_fields=("status", "updated_at"))
+                revoked += 1
+            except ValidationError as exc:
+                self.message_user(
+                    request,
+                    f"Release {selected}: {exc}",
+                    level=messages.ERROR,
+                )
+        if revoked:
+            self.message_user(
+                request,
+                f"Revoked {revoked} desktop release(s).",
+                level=messages.SUCCESS,
+            )
 
 
 @admin.register(BootstrapAudit)
