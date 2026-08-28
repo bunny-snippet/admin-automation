@@ -319,6 +319,65 @@ class ProxyRegionCatalog(models.Model):
         )
 
 
+class ProxyCityCatalog(models.Model):
+    """Provider geography shared by bundles using the same provider account."""
+
+    provider = models.ForeignKey(
+        Provider,
+        on_delete=models.CASCADE,
+        related_name="city_catalog",
+    )
+    account_key = models.CharField(max_length=64)
+    country_code = models.CharField(max_length=32, validators=[catalog_id_validator])
+    region_code = models.CharField(max_length=120, blank=True)
+    city_name = models.CharField(max_length=120)
+    source = models.CharField(max_length=40, blank=True, default="")
+    active = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = (
+            "provider__display_order",
+            "account_key",
+            "country_code",
+            "region_code",
+            "city_name",
+        )
+        constraints = [
+            models.UniqueConstraint(
+                fields=(
+                    "provider",
+                    "account_key",
+                    "country_code",
+                    "region_code",
+                    "city_name",
+                ),
+                name="unique_p2_account_country_region_city",
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=(
+                    "provider",
+                    "account_key",
+                    "country_code",
+                    "region_code",
+                    "active",
+                ),
+                name="proxycity_account_scope_idx",
+            )
+        ]
+
+    def __str__(self) -> str:
+        location = f"{self.country_code} / "
+        if self.region_code:
+            location += f"{self.region_code} / "
+        return (
+            f"{self.provider.code} / {self.account_key[:8]} / "
+            f"{location}{self.city_name}"
+        )
+
+
 class ExtensionPackage(models.Model):
     name = models.CharField(max_length=120, unique=True)
     filename = models.CharField(max_length=180)

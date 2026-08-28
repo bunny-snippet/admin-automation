@@ -149,6 +149,7 @@ class PrefillP2GeoPoolsTests(TestCase):
             state_threshold=0,
             city_target=1,
             city_threshold=0,
+            prefill_city_pools=True,
             batch_size=2,
             batch_timeout=30,
             stdout=stdout,
@@ -198,7 +199,10 @@ class PrefillP2GeoPoolsTests(TestCase):
         stale_region.refresh_from_db()
         self.assertTrue(stale_region.active)
         self.assertFalse(stale_target.active)
-        self.assertIn("Skipped live nodes without a numeric subdivision ID: 1", stderr.getvalue())
+        self.assertIn(
+            "skipped live nodes without a numeric subdivision ID: 1",
+            stderr.getvalue(),
+        )
         self.assertIn("PREFILL_DONE targets=4/4 failures=0", stdout.getvalue())
 
     @mock.patch("control.management.commands.prefill_p2_geo_pools._post_form_json")

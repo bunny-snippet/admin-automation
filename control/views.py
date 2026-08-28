@@ -28,9 +28,10 @@ from django.views.decorators.http import require_GET, require_POST
 
 from .models import (
     BootstrapAudit, ClientAccess, DesktopRelease, ExtensionPackage, ProfileActivity, ProfileDomainActivity, Provider, ProxyCountryFile,
-    ProfileCreateLease, ProfileCreateQueue, ProxyGenerationJob, ProxyPoolTarget, ProxyReservation,
-    ProxyRegionCatalog,
+    ProfileCreateLease, ProfileCreateQueue, ProxyCityCatalog, ProxyGenerationJob,
+    ProxyPoolEntry, ProxyPoolTarget, ProxyReservation, ProxyRegionCatalog,
 )
+from .geo_catalog import p2_geo_account_key_from_config
 from .release_updates import (
     desktop_update_manifest,
     release_applies_to_client,
@@ -44,8 +45,13 @@ from .release_updates import (
 # at the API's normal validation limit for this diagnostic release; the client
 # side cap will be reintroduced once the rebuilt EXE is deployed.
 MAX_PROFILES_PER_REQUEST = 50
-from .proxy_jobs import get_or_create_pool_target, reserve_pool_proxies, reserve_static_proxies
-from .tasks import queue_refill_proxy_pool
+from .proxy_jobs import (
+    get_or_create_pool_target,
+    proxy_fingerprint,
+    reserve_pool_proxies,
+    reserve_static_proxies,
+)
+from .tasks import _generate, queue_refill_proxy_pool
 from .inventory_alerts import record_proxy_inventory_shortage
 from .openapi import OPENAPI_SCHEMA, SWAGGER_HTML
 
@@ -977,6 +983,76 @@ def desktop_release_download(request: HttpRequest, release_id: int) -> HttpRespo
     return response
 
 
+def _ensure_exact_city_inventory(
+    *,
+    client: ClientAccess,
+    provider_code: str,
+    country_code: str,
+    region: str,
+    city: str,
+    minimum_available: int,
+) -> ProxyPoolTarget:
+    """Generate a small city pool locally while the caller's transaction is open.
+
+    P2/P3 API proxy generation only builds signed-in proxy usernames; it does
+    not make a provider network request.  Keeping this path synchronous avoids
+    both a Celery wait and millions of per-bundle pre-generated city rows.
+    """
+    target, _created = ProxyPoolTarget.objects.get_or_create(
+        config_bundle=client.config_bundle,
+        provider_code=provider_code,
+        country_code=country_code,
+        region=region,
+        city=city,
+        defaults={
+            "target_count": 10,
+            "replenish_below": 2,
+            "active": True,
+        },
+    )
+    target = (
+        ProxyPoolTarget.objects.select_for_update()
+        .select_related("config_bundle")
+        .get(pk=target.pk)
+    )
+    changed_fields: list[str] = []
+    if not target.active:
+        target.active = True
+        changed_fields.append("active")
+    desired = max(1, min(10, int(minimum_available)))
+    if target.target_count != 10:
+        target.target_count = 10
+        changed_fields.append("target_count")
+    if target.replenish_below != 2:
+        target.replenish_below = 2
+        changed_fields.append("replenish_below")
+    if changed_fields:
+        target.save(update_fields=tuple(changed_fields) + ("updated_at",))
+
+    available = target.entries.filter(state="available").count()
+    needed = max(0, desired - available)
+    if not needed:
+        return target
+    config = target.config_bundle.get_payload()
+    entries: list[ProxyPoolEntry] = []
+    for line in _generate(
+        provider_code,
+        country_code,
+        region,
+        city,
+        needed,
+        config,
+    ):
+        entry = ProxyPoolEntry(
+            target=target,
+            proxy_fingerprint=proxy_fingerprint(line),
+        )
+        entry.set_proxy(line)
+        entries.append(entry)
+    ProxyPoolEntry.objects.bulk_create(entries, batch_size=10)
+    return target
+
+
 @csrf_exempt
 @require_POST
 def create_proxy_job(request: HttpRequest) -> JsonResponse:
@@ -1011,8 +1087,6 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
             raise ValueError("Invalid proxy request")
         if provider_code not in {"P2", "P3"}:
             city = ""
-        if provider_code == "P2" and city and not region:
-            raise ValueError("P2 city targeting requires a region")
         # Massive resolves city targeting independently and documents that a
         # city takes precedence over subdivision. Store city pools without a
         # region so the same ready inventory serves both country+city and
@@ -1029,73 +1103,124 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
             active=True,
         ).exists():
             raise ValueError("Unsupported provider region")
-        if provider_code == "P2" and city and not ProxyPoolTarget.objects.filter(
-            config_bundle=client.config_bundle,
-            provider_code="P2",
-            country_code=country_code,
-            region=region,
-            city=city,
-            active=True,
-        ).exists():
-            raise ValueError("Unsupported P2 city")
+        if provider_code == "P2" and city:
+            account_key = p2_geo_account_key_from_config(
+                client.config_bundle.get_payload()
+            )
+            if not account_key:
+                raise ValueError("P2 geo account is unavailable")
+            catalog_query = ProxyCityCatalog.objects.filter(
+                provider__code="P2",
+                provider__active=True,
+                account_key=account_key,
+                country_code=country_code,
+                city_name=city,
+                active=True,
+            )
+            if region:
+                catalog_query = catalog_query.filter(region_code=region)
+            city = str(
+                catalog_query.order_by("city_name").values_list(
+                    "city_name", flat=True
+                ).first()
+                or ""
+            )
+            if not city:
+                raise ValueError("Unsupported P2 city")
+        if provider_code == "P3" and city:
+            city_by_key = {
+                str(value).casefold(): str(value)
+                for value in _p3_prefill_geography()
+                .get(country_code, {})
+                .get("cities", [])
+                if str(value).strip()
+            }
+            city = city_by_key.get(city.casefold(), "")
+            if not city:
+                raise ValueError("Unsupported P3 city")
+        if provider_code in {"P2", "P3"} and city:
+            if requested_count > 10:
+                raise ValueError("Exact city requests are limited to 10 profiles")
+            candidate_count = min(candidate_count, 10)
     except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError,
             signing.BadSignature, signing.SignatureExpired, ClientAccess.DoesNotExist):
         return _json_response({"allowed": False, "message": "Access denied."}, status=403)
 
-    with transaction.atomic():
-        job = ProxyGenerationJob.objects.create(
-            client=client, provider_code=provider_code, country_code=country_code,
-            region=region, city=city, submitted_count=submitted_count,
-            requested_count=requested_count,
-            candidate_count=candidate_count,
-            status="queued",
-        )
-        reservations = reserve_pool_proxies(
-            client=client, job=job, provider_code=provider_code, country_code=country_code, region=region, city=city,
-        )
-        if len(reservations) < candidate_count and not region and not city:
-            reservations += reserve_static_proxies(
-                client=client, job=job, provider_code=provider_code, country_code=country_code, region=region, city=city,
+    try:
+        with transaction.atomic():
+            if provider_code in {"P2", "P3"} and city:
+                _ensure_exact_city_inventory(
+                    client=client,
+                    provider_code=provider_code,
+                    country_code=country_code,
+                    region=region,
+                    city=city,
+                    minimum_available=candidate_count,
+                )
+            job = ProxyGenerationJob.objects.create(
+                client=client, provider_code=provider_code, country_code=country_code,
+                region=region, city=city, submitted_count=submitted_count,
+                requested_count=requested_count,
+                candidate_count=candidate_count,
+                status="queued",
             )
-        job.ready_count = len(reservations)
-        if job.ready_count >= candidate_count:
-            job.status = "ready"
-        elif job.ready_count:
-            job.status = "partial"
-        else:
-            job.status = (
-                "waiting_generation"
-                if settings.AUTO_GENERATE_PROXY_ON_DEMAND
-                else "failed"
-            )
-        if job.ready_count < candidate_count and not settings.AUTO_GENERATE_PROXY_ON_DEMAND:
-            job.error = (
-                f"Only {job.ready_count} proxy/proxies are available for "
-                f"{provider_code} {country_code}. Automatic generation is disabled; "
-                "the administrator has been notified."
-            )
-            record_proxy_inventory_shortage(
-                client=client,
-                provider_code=provider_code,
-                country_code=country_code,
-                region=region,
-                city=city,
-                available_count=job.ready_count,
-                requested_count=candidate_count,
-            )
-        job.save(update_fields=("ready_count", "status", "error", "updated_at"))
-        if (
-            settings.AUTO_GENERATE_PROXY_ON_DEMAND
-            and settings.CELERY_BROKER_URL
-            and job.ready_count < candidate_count
-        ):
-            target = get_or_create_pool_target(
-                client=client, provider_code=provider_code,
+            reservations = reserve_pool_proxies(
+                client=client, job=job, provider_code=provider_code,
                 country_code=country_code, region=region, city=city,
             )
-            transaction.on_commit(
-                lambda target_id=target.pk: queue_refill_proxy_pool(target_id)
+            if len(reservations) < candidate_count and not region and not city:
+                reservations += reserve_static_proxies(
+                    client=client, job=job, provider_code=provider_code,
+                    country_code=country_code, region=region, city=city,
+                )
+            job.ready_count = len(reservations)
+            if job.ready_count >= candidate_count:
+                job.status = "ready"
+            elif job.ready_count:
+                job.status = "partial"
+            else:
+                job.status = (
+                    "waiting_generation"
+                    if settings.AUTO_GENERATE_PROXY_ON_DEMAND
+                    else "failed"
+                )
+            if (
+                job.ready_count < candidate_count
+                and not settings.AUTO_GENERATE_PROXY_ON_DEMAND
+            ):
+                job.error = (
+                    f"Only {job.ready_count} proxy/proxies are available for "
+                    f"{provider_code} {country_code}. Automatic generation is "
+                    "disabled; the administrator has been notified."
+                )
+                record_proxy_inventory_shortage(
+                    client=client,
+                    provider_code=provider_code,
+                    country_code=country_code,
+                    region=region,
+                    city=city,
+                    available_count=job.ready_count,
+                    requested_count=candidate_count,
+                )
+            job.save(
+                update_fields=("ready_count", "status", "error", "updated_at")
             )
+            if (
+                settings.AUTO_GENERATE_PROXY_ON_DEMAND
+                and settings.CELERY_BROKER_URL
+                and job.ready_count < candidate_count
+            ):
+                target = get_or_create_pool_target(
+                    client=client, provider_code=provider_code,
+                    country_code=country_code, region=region, city=city,
+                )
+                transaction.on_commit(
+                    lambda target_id=target.pk: queue_refill_proxy_pool(target_id)
+                )
+    except ValueError:
+        return _json_response(
+            {"allowed": False, "message": "Access denied."}, status=403
+        )
     return _json_response({"allowed": True, "job": _job_payload(job)}, status=201)
 
 
@@ -1115,9 +1240,9 @@ def proxy_cities(
     request: HttpRequest,
     provider_code: str,
     country_code: str,
-    region_code: str,
+    region_code: str = "",
 ) -> JsonResponse:
-    """Return only pre-generated, currently ready cities for this client."""
+    """Return live-catalog P2 cities without multiplying pools per bundle."""
     try:
         client = _authenticated_client(request)
         provider = str(provider_code or "").strip().upper()
@@ -1127,9 +1252,14 @@ def proxy_cities(
             region_code,
             "",
         )
-        if provider != "P2" or not country or not region:
+        if provider != "P2" or not country:
             raise ValueError("Unsupported proxy city request")
-        if not ProxyRegionCatalog.objects.filter(
+        account_key = p2_geo_account_key_from_config(
+            client.config_bundle.get_payload()
+        )
+        if not account_key:
+            raise ValueError("P2 geo account is unavailable")
+        if region and not ProxyRegionCatalog.objects.filter(
             provider__code="P2",
             provider__active=True,
             country_code=country,
@@ -1137,19 +1267,19 @@ def proxy_cities(
             active=True,
         ).exists():
             raise ValueError("Unsupported provider region")
+        city_query = ProxyCityCatalog.objects.filter(
+            provider__code="P2",
+            provider__active=True,
+            account_key=account_key,
+            country_code=country,
+            active=True,
+        )
+        if region:
+            city_query = city_query.filter(region_code=region)
         cities = list(
-            ProxyPoolTarget.objects.filter(
-                config_bundle=client.config_bundle,
-                provider_code="P2",
-                country_code=country,
-                region=region,
-                active=True,
-                city__gt="",
-                entries__state="available",
-            )
-            .order_by("city")
-            .values_list("city", flat=True)
-            .distinct()[:10000]
+            city_query.order_by("city_name")
+            .values_list("city_name", flat=True)
+            .distinct()[:25000]
         )
     except (
         ValueError,

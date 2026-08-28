@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import urllib.parse
 import urllib.request
@@ -28,6 +29,25 @@ def _config_value(config: dict[str, Any], *names: str) -> str:
         if value:
             return value
     return ""
+
+
+def p2_geo_account_key(email: str) -> str:
+    """Return a stable pseudonymous identifier for one P2 geo account."""
+    normalized = str(email or "").strip().casefold()
+    if not normalized:
+        return ""
+    return hashlib.sha256(
+        f"p2-geo-account-v1\0{normalized}".encode("utf-8")
+    ).hexdigest()
+
+
+def p2_geo_account_key_from_config(config: dict[str, Any]) -> str:
+    email = ""
+    for name in ("INFATICA_ACCOUNT_EMAIL", "P2_ACCOUNT_EMAIL"):
+        email = str(config.get(name) or "").strip()
+        if email:
+            break
+    return p2_geo_account_key(email)
 
 
 def country_rows() -> list[tuple[str, str]]:

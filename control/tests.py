@@ -21,13 +21,19 @@ from django.urls import reverse
 from django.utils import timezone
 
 from .admin import DesktopReleaseForm, import_catalog_zip
-from .geo_catalog import ensure_global_country_catalog, ensure_p4_region_catalog
+from .geo_catalog import (
+    ensure_global_country_catalog,
+    ensure_p4_region_catalog,
+    p2_geo_account_key,
+)
 from .models import (
     BootstrapAudit, ClientAccess, ClientAccessIP, ConfigBundle, DesktopRelease, ExtensionPackage, ProfileDomainActivity,
-    MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyInventoryAlert, ProxyPoolEntry, ProxyPoolTarget,
+    MonitoredDomain, Provider, ProxyCityCatalog, ProxyCountryFile,
+    ProxyGenerationJob, ProxyInventoryAlert, ProxyPoolEntry, ProxyPoolTarget,
     ProxyReservation, ProfileCreateLease, ProfileCreateQueue, ProxyRegionCatalog,
 )
 from .release_updates import canonical_release_payload, verify_release_signature
+from .management.commands.prefill_p2_geo_pools import _sync_city_catalog
 from .proxy_jobs import reserve_pool_proxies
 from .tasks import (
     _generate, ensure_pool_targets, provider_is_configured, queue_refill_proxy_pool,
@@ -120,9 +126,11 @@ class ControlApiTests(TestCase):
                 "APP_API_KEY": "browser-secret",
                 "TUBELIGHT_API_KEY": "tubelight-secret",
                 "P1_PASSWORD": "proxy-secret",
+                "P2_ACCOUNT_EMAIL": "office-a@example.test",
             }
         )
         self.bundle.save()
+        self.p2_account_key = p2_geo_account_key("office-a@example.test")
         self.client_access = ClientAccess.objects.create(
             name="Office system 1",
             ipv4="203.0.113.10",
@@ -494,6 +502,14 @@ class ControlApiTests(TestCase):
             region_code="1906",
             region_name="New York",
         )
+        ProxyCityCatalog.objects.create(
+            provider=p2,
+            account_key=self.p2_account_key,
+            country_code="US",
+            region_code="1906",
+            city_name="New York",
+            source="infatica-live",
+        )
         ProxyPoolTarget.objects.create(
             config_bundle=self.bundle,
             provider_code="P2",
@@ -523,20 +539,39 @@ class ControlApiTests(TestCase):
 
         self.assertEqual(response.status_code, 201)
         job = response.json()["job"]
-        self.assertEqual(job["status"], "failed")
+        self.assertEqual(job["status"], "ready")
+        self.assertEqual(job["ready_count"], 2)
         stored = ProxyGenerationJob.objects.get(pk=job["id"])
         self.assertEqual(stored.region, "1906")
         self.assertEqual(stored.city, "New York")
 
-    def test_p2_proxy_job_rejects_city_without_state(self):
+    def test_p2_country_city_job_instantly_fills_missing_pool_and_caps_candidates(self):
+        payload = self.bundle.get_payload()
+        payload.update({
+            "P2_API_USERNAME": "proxy-user",
+            "P2_API_PASSWORD": "proxy-password",
+            "P2_PROTOCOL": "socks5",
+        })
+        self.bundle.set_payload(payload)
+        self.bundle.save()
+        p2 = Provider.objects.create(code="P2", display_name="P2", display_order=2)
+        ProxyCityCatalog.objects.create(
+            provider=p2,
+            account_key=self.p2_account_key,
+            country_code="GB",
+            region_code="850",
+            city_name="London",
+            source="infatica-live",
+        )
         token = self.bootstrap().json()["access_token"]
         response = self.client.post(
             reverse("control:proxy-job-create"),
             data=json.dumps({
                 "provider": "P2",
-                "country": "US",
-                "city": "New York",
+                "country": "GB",
+                "city": "London",
                 "count": 1,
+                "candidate_count": 50,
             }),
             content_type="application/json",
             HTTP_AUTHORIZATION=f"Bearer {token}",
@@ -544,8 +579,24 @@ class ControlApiTests(TestCase):
             REMOTE_ADDR="203.0.113.10",
         )
 
-        self.assertEqual(response.status_code, 403)
-        self.assertFalse(response.json()["allowed"])
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.json()["allowed"])
+        job = response.json()["job"]
+        self.assertEqual(job["candidate_count"], 10)
+        self.assertEqual(job["ready_count"], 10)
+        self.assertEqual(job["status"], "ready")
+        stored = ProxyGenerationJob.objects.get(pk=job["id"])
+        self.assertEqual(stored.region, "")
+        self.assertEqual(stored.city, "London")
+        target = ProxyPoolTarget.objects.get(
+            config_bundle=self.bundle,
+            provider_code="P2",
+            country_code="GB",
+            region="",
+            city="London",
+        )
+        self.assertEqual(target.target_count, 10)
+        self.assertEqual(target.entries.filter(state="reserved").count(), 10)
 
     def test_p2_proxy_job_rejects_city_outside_prefilled_catalog(self):
         p2 = Provider.objects.create(code="P2", display_name="P2", display_order=2)
@@ -574,7 +625,47 @@ class ControlApiTests(TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertFalse(response.json()["allowed"])
 
-    def test_p2_city_catalog_returns_only_pre_generated_ready_cities(self):
+    def test_p3_exact_city_job_caps_candidates_and_instantly_refills(self):
+        payload = self.bundle.get_payload()
+        payload.update({
+            "P3_PROXY_USERNAME": "massive-user",
+            "P3_API_KEY": "massive-password",
+            "P3_PROTOCOL": "http",
+        })
+        self.bundle.set_payload(payload)
+        self.bundle.save()
+        token = self.bootstrap().json()["access_token"]
+
+        response = self.client.post(
+            reverse("control:proxy-job-create"),
+            data=json.dumps({
+                "provider": "P3",
+                "country": "GB",
+                "city": "London",
+                "count": 1,
+                "candidate_count": 50,
+            }),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+            HTTP_X_DEVICE_ID="device-one",
+            REMOTE_ADDR="203.0.113.10",
+        )
+
+        self.assertEqual(response.status_code, 201)
+        job = response.json()["job"]
+        self.assertEqual(job["candidate_count"], 10)
+        self.assertEqual(job["ready_count"], 10)
+        self.assertEqual(job["status"], "ready")
+        target = ProxyPoolTarget.objects.get(
+            config_bundle=self.bundle,
+            provider_code="P3",
+            country_code="GB",
+            region="",
+            city="London",
+        )
+        self.assertEqual(target.entries.filter(state="reserved").count(), 10)
+
+    def test_p2_state_city_catalog_is_independent_of_bundle_inventory(self):
         p2 = Provider.objects.create(code="P2", display_name="P2", display_order=2)
         ProxyRegionCatalog.objects.create(
             provider=p2,
@@ -582,27 +673,22 @@ class ControlApiTests(TestCase):
             region_code="1906",
             region_name="New York",
         )
-        ready = ProxyPoolTarget.objects.create(
-            config_bundle=self.bundle,
-            provider_code="P2",
+        ProxyCityCatalog.objects.create(
+            provider=p2,
+            account_key=self.p2_account_key,
             country_code="US",
-            region="1906",
-            city="New York",
-            target_count=10,
-            replenish_below=2,
+            region_code="1906",
+            city_name="New York",
+            source="infatica-live",
         )
-        ProxyPoolTarget.objects.create(
-            config_bundle=self.bundle,
-            provider_code="P2",
+        ProxyCityCatalog.objects.create(
+            provider=p2,
+            account_key=self.p2_account_key,
             country_code="US",
-            region="1906",
-            city="Albany",
-            target_count=10,
-            replenish_below=2,
+            region_code="1906",
+            city_name="Albany",
+            source="infatica-live",
         )
-        entry = ProxyPoolEntry(target=ready, proxy_fingerprint="b" * 64)
-        entry.set_proxy("socks5://user:pass@example.test:10000")
-        entry.save()
         token = self.bootstrap().json()["access_token"]
 
         response = self.client.get(
@@ -613,7 +699,97 @@ class ControlApiTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"allowed": True, "cities": ["New York"]})
+        self.assertEqual(
+            response.json(),
+            {"allowed": True, "cities": ["Albany", "New York"]},
+        )
+
+    def test_p2_country_city_catalog_returns_all_shared_cities(self):
+        p2 = Provider.objects.create(
+            code="P2", display_name="P2", display_order=2
+        )
+        ProxyCityCatalog.objects.create(
+            provider=p2,
+            account_key=self.p2_account_key,
+            country_code="GB",
+            region_code="850",
+            city_name="London",
+            source="infatica-live",
+        )
+        ProxyCityCatalog.objects.create(
+            provider=p2,
+            account_key=self.p2_account_key,
+            country_code="GB",
+            region_code="850",
+            city_name="Manchester",
+            source="infatica-live",
+        )
+        token = self.bootstrap().json()["access_token"]
+
+        response = self.client.get(
+            reverse("control:proxy-cities-country", args=("P2", "GB")),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+            HTTP_X_DEVICE_ID="device-one",
+            REMOTE_ADDR="203.0.113.10",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {"allowed": True, "cities": ["London", "Manchester"]},
+        )
+
+    def test_p2_city_list_and_validation_are_isolated_by_geo_account(self):
+        p2 = Provider.objects.create(
+            code="P2", display_name="P2", display_order=2
+        )
+        other_account_key = p2_geo_account_key("office-b@example.test")
+        ProxyCityCatalog.objects.create(
+            provider=p2,
+            account_key=self.p2_account_key,
+            country_code="GB",
+            region_code="850",
+            city_name="London",
+            source="infatica-live",
+        )
+        ProxyCityCatalog.objects.create(
+            provider=p2,
+            account_key=other_account_key,
+            country_code="GB",
+            region_code="850",
+            city_name="Leeds",
+            source="infatica-live",
+        )
+        token = self.bootstrap().json()["access_token"]
+        headers = {
+            "HTTP_AUTHORIZATION": f"Bearer {token}",
+            "HTTP_X_DEVICE_ID": "device-one",
+            "REMOTE_ADDR": "203.0.113.10",
+        }
+
+        response = self.client.get(
+            reverse("control:proxy-cities-country", args=("P2", "GB")),
+            **headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {"allowed": True, "cities": ["London"]},
+        )
+        rejected = self.client.post(
+            reverse("control:proxy-job-create"),
+            data=json.dumps({
+                "provider": "P2",
+                "country": "GB",
+                "city": "Leeds",
+                "count": 1,
+            }),
+            content_type="application/json",
+            **headers,
+        )
+        self.assertEqual(rejected.status_code, 403)
+        self.assertFalse(rejected.json()["allowed"])
 
     def test_empty_inventory_does_not_generate_and_records_alert(self):
         token = self.bootstrap().json()["access_token"]
@@ -1019,9 +1195,13 @@ class ProxyPoolTaskTests(TestCase):
                 "P2_API_USERNAME": "proxy-user",
                 "P2_API_PASSWORD": "proxy-password",
                 "P2_PROTOCOL": "socks5",
+                "P2_ACCOUNT_EMAIL": "pool-account@example.test",
             }
         )
         self.bundle.save()
+        self.p2_account_key = p2_geo_account_key(
+            "pool-account@example.test"
+        )
         self.client_access = ClientAccess.objects.create(
             name="Pool device",
             ipv4="203.0.113.70",
@@ -1100,6 +1280,134 @@ class ProxyPoolTaskTests(TestCase):
         self.assertIn("_c_US_s_", lines[0])
         self.assertTrue(lines[0].endswith("@pool.infatica.io:10000"))
         self.assertTrue(lines[1].endswith("@pool.infatica.io:10001"))
+
+    def test_p2_live_city_catalog_is_shared_and_stale_rows_are_disabled(self):
+        other_account_key = p2_geo_account_key("other-pool@example.test")
+        stale = ProxyCityCatalog.objects.create(
+            provider=self.provider,
+            account_key=self.p2_account_key,
+            country_code="US",
+            region_code="1906",
+            city_name="Old City",
+            source="infatica-live",
+        )
+        other = ProxyCityCatalog.objects.create(
+            provider=self.provider,
+            account_key=other_account_key,
+            country_code="US",
+            region_code="1906",
+            city_name="Other Account City",
+            source="infatica-live",
+        )
+        specs = {
+            ("US", "1906", "New York"): ("city", 10, 2),
+            ("US", "1906", "Albany"): ("city", 10, 2),
+            ("US", "1906", ""): ("state", 50, 10),
+        }
+
+        changed, disabled = _sync_city_catalog(
+            self.p2_account_key, specs, ["US"]
+        )
+
+        self.assertEqual(changed, 2)
+        self.assertEqual(disabled, 1)
+        self.assertEqual(
+            set(
+                ProxyCityCatalog.objects.filter(
+                    provider=self.provider,
+                    account_key=self.p2_account_key,
+                    country_code="US",
+                    active=True,
+                ).values_list("city_name", flat=True)
+            ),
+            {"Albany", "New York"},
+        )
+        stale.refresh_from_db()
+        self.assertFalse(stale.active)
+        other.refresh_from_db()
+        self.assertTrue(other.active)
+
+    def test_p2_catalog_only_syncs_multiple_geo_accounts_in_one_run(self):
+        first_payload = self.bundle.get_payload()
+        first_payload["P2_ACCOUNT_PASSWORD"] = "geo-password-a"
+        self.bundle.set_payload(first_payload)
+        self.bundle.save()
+        second_bundle = ConfigBundle(name="Pool config B", version=1)
+        second_bundle.set_payload({
+            "P2_API_USERNAME": "proxy-user-b",
+            "P2_API_PASSWORD": "proxy-password-b",
+            "P2_PROTOCOL": "socks5",
+            "P2_ACCOUNT_EMAIL": "pool-b@example.test",
+            "P2_ACCOUNT_PASSWORD": "geo-password-b",
+        })
+        second_bundle.save()
+        ClientAccess.objects.create(
+            name="Pool device B",
+            ipv4="203.0.113.71",
+            device_id="pool-device-b",
+            office_name="Pool office B",
+            system_number="1",
+            config_bundle=second_bundle,
+        )
+
+        def live_specs(*, email, password, countries, counts, thresholds):
+            del password, counts, thresholds
+            if email == "pool-account@example.test":
+                region_code, region_name, city = "1906", "New York", "Albany"
+            else:
+                region_code, region_name, city = "1912", "Massachusetts", "Boston"
+            specs = {
+                ("US", "", ""): ("country", 1000, 200),
+                ("US", region_code, ""): ("state", 50, 10),
+                ("US", region_code, city): ("city", 10, 2),
+            }
+            summary = {
+                "nodes_seen": 1,
+                "states": 1,
+                "cities": 1,
+                "skipped_without_numeric_region": 0,
+                "skipped_long_city": 0,
+            }
+            return specs, {"US": {region_code: region_name}}, summary
+
+        output = io.StringIO()
+        with mock.patch(
+            "control.management.commands.prefill_p2_geo_pools._live_specs",
+            side_effect=live_specs,
+        ) as loader:
+            call_command(
+                "prefill_p2_geo_pools",
+                "--office", "Pool office",
+                "--office", "Pool office B",
+                "--country", "US",
+                "--catalog-only",
+                stdout=output,
+            )
+
+        self.assertEqual(loader.call_count, 2)
+        self.assertIn("accounts=2", output.getvalue())
+        self.assertIn("CATALOG_DONE", output.getvalue())
+        first_key = p2_geo_account_key("pool-account@example.test")
+        second_key = p2_geo_account_key("pool-b@example.test")
+        self.assertEqual(
+            set(
+                ProxyCityCatalog.objects.filter(
+                    account_key=first_key,
+                    active=True,
+                ).values_list("city_name", flat=True)
+            ),
+            {"Albany"},
+        )
+        self.assertEqual(
+            set(
+                ProxyCityCatalog.objects.filter(
+                    account_key=second_key,
+                    active=True,
+                ).values_list("city_name", flat=True)
+            ),
+            {"Boston"},
+        )
+        self.assertFalse(ProxyPoolTarget.objects.filter(city__gt="").exists())
 
     def test_p2_generation_keeps_numeric_state_and_city_targeting(self):
         line = _generate(

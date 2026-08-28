@@ -8,15 +8,16 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db.models import Count, Q
 
 from control.geo_catalog import (
-    _config_value,
     _flatten_dicts,
     _post_form_json,
     ensure_global_country_catalog,
+    p2_geo_account_key,
 )
 from control.models import (
     ClientAccess,
     ConfigBundle,
     Provider,
+    ProxyCityCatalog,
     ProxyPoolTarget,
     ProxyRegionCatalog,
 )
@@ -48,13 +49,16 @@ def _bounded(value: int, *, minimum: int = 1) -> int:
 
 
 def _geo_credentials(config: dict[str, Any]) -> tuple[str, str]:
+    def payload_value(*names: str) -> str:
+        for name in names:
+            value = str(config.get(name) or "").strip()
+            if value:
+                return value
+        return ""
+
     return (
-        _config_value(config, "INFATICA_ACCOUNT_EMAIL", "P2_ACCOUNT_EMAIL"),
-        _config_value(
-            config,
-            "INFATICA_ACCOUNT_PASSWORD",
-            "P2_ACCOUNT_PASSWORD",
-        ),
+        payload_value("INFATICA_ACCOUNT_EMAIL", "P2_ACCOUNT_EMAIL"),
+        payload_value("INFATICA_ACCOUNT_PASSWORD", "P2_ACCOUNT_PASSWORD"),
     )
 
 
@@ -159,8 +163,6 @@ def _live_specs(
                 cities.get((country, region_code), {}).values(),
                 key=str.casefold,
             ):
-                # Infatica accepts subdivision and city together. Deliberately
-                # do not create city-only P2 pools.
                 specs[(country, region_code, city)] = (
                     "city",
                     counts["city"],
@@ -229,11 +231,73 @@ def _sync_region_catalog(
     return len(new_rows) + len(changed_rows)
 
 
+def _sync_city_catalog(
+    account_key: str,
+    specs: dict[tuple[str, str, str], tuple[str, int, int]],
+    countries: list[str],
+) -> tuple[int, int]:
+    """Store P2 geography once globally, not once per configuration bundle."""
+    if len(account_key) != 64:
+        raise ValueError("P2 geo account key is unavailable")
+    provider = Provider.objects.get(code="P2")
+    expected = {
+        (country, region, city)
+        for country, region, city in specs
+        if city
+    }
+    current = {
+        (row.country_code, row.region_code, row.city_name): row
+        for row in ProxyCityCatalog.objects.filter(
+            provider=provider,
+            account_key=account_key,
+            country_code__in=countries,
+        )
+    }
+    new_rows: list[ProxyCityCatalog] = []
+    changed_rows: list[ProxyCityCatalog] = []
+    for country, region, city in expected:
+        row = current.get((country, region, city))
+        if row is None:
+            new_rows.append(
+                ProxyCityCatalog(
+                    provider=provider,
+                    account_key=account_key,
+                    country_code=country,
+                    region_code=region,
+                    city_name=city,
+                    source="infatica-live",
+                    active=True,
+                )
+            )
+        elif row.source != "infatica-live" or not row.active:
+            row.source = "infatica-live"
+            row.active = True
+            changed_rows.append(row)
+    stale_ids = [
+        row.pk
+        for key, row in current.items()
+        if row.active and key not in expected
+    ]
+    ProxyCityCatalog.objects.bulk_create(
+        new_rows,
+        batch_size=1000,
+        ignore_conflicts=True,
+    )
+    if changed_rows:
+        ProxyCityCatalog.objects.bulk_update(
+            changed_rows,
+            ("source", "active"),
+            batch_size=1000,
+        )
+    if stale_ids:
+        ProxyCityCatalog.objects.filter(pk__in=stale_ids).update(active=False)
+    return len(new_rows) + len(changed_rows), len(stale_ids)
+
+
 class Command(BaseCommand):
     help = (
-        "Fetch live P2 geography once, then pre-create and gradually fill "
-        "country, numeric subdivision, and subdivision+city pools for the "
-        "configuration bundles assigned to selected offices."
+        "Fetch live P2 geography once, synchronize the shared city catalog, "
+        "and fill country/state pools for bundles assigned to selected offices."
     )
 
     def add_arguments(self, parser):
@@ -251,6 +315,23 @@ class Command(BaseCommand):
             "--direct-fill",
             action="store_true",
             help="Fill in batched DB writes instead of publishing one Celery task per target.",
+        )
+        parser.add_argument(
+            "--catalog-only",
+            action="store_true",
+            help=(
+                "Synchronize live P2 states/cities without multiplying city "
+                "proxy pools across every bundle."
+            ),
+        )
+        parser.add_argument(
+            "--prefill-city-pools",
+            action="store_true",
+            help=(
+                "Explicit legacy mode: multiply every city pool across every "
+                "selected bundle. Normally cities are generated instantly "
+                "only when selected."
+            ),
         )
         parser.add_argument("--status-only", action="store_true")
 
@@ -335,56 +416,127 @@ class Command(BaseCommand):
                 + ", ".join(sorted(missing_api))
             )
 
-        accounts: dict[tuple[str, str], list[str]] = defaultdict(list)
-        missing_geo = []
+        account_groups: dict[str, dict[str, Any]] = {}
+        bundle_account: dict[int, str] = {}
+        missing_geo: list[str] = []
         for bundle in bundles:
-            credentials = _geo_credentials(bundle_configs[bundle.pk])
-            if not all(credentials):
+            email, password = _geo_credentials(bundle_configs[bundle.pk])
+            account_key = p2_geo_account_key(email)
+            if not account_key or not password:
                 missing_geo.append(bundle.name)
                 continue
-            accounts[credentials].append(bundle.name)
+            group = account_groups.setdefault(
+                account_key,
+                {
+                    "email": email,
+                    "password": password,
+                    "bundles": [],
+                },
+            )
+            if (
+                group["email"].strip().casefold() != email.strip().casefold()
+                or group["password"] != password
+            ):
+                raise CommandError(
+                    "Bundles for P2 geo account "
+                    f"{account_key[:12]} use conflicting credentials."
+                )
+            group["bundles"].append(bundle)
+            bundle_account[bundle.pk] = account_key
         if missing_geo:
             raise CommandError(
                 "P2 account geo credentials are missing for: "
                 + ", ".join(sorted(missing_geo))
             )
-        if len(accounts) != 1:
-            raise CommandError(
-                "Selected bundles use multiple P2 geo accounts; run this "
-                "command once per account so each live catalog is fetched once."
-            )
-        email, password = next(iter(accounts))
 
-        try:
-            specs, regions, geo_summary = _live_specs(
-                email=email,
-                password=password,
-                countries=countries,
-                counts=counts,
-                thresholds=thresholds,
-            )
-        except Exception as exc:
-            raise CommandError(
-                f"P2 live geography could not be loaded ({type(exc).__name__})."
-            ) from exc
+        catalog_specs_by_account: dict[
+            str, dict[tuple[str, str, str], tuple[str, int, int]]
+        ] = {}
+        pool_specs_by_account: dict[
+            str, dict[tuple[str, str, str], tuple[str, int, int]]
+        ] = {}
+        regions_by_account: dict[str, dict[str, dict[str, str]]] = {}
+        summaries_by_account: dict[str, dict[str, int]] = {}
+        for account_key, group in account_groups.items():
+            try:
+                catalog_specs, regions, geo_summary = _live_specs(
+                    email=group["email"],
+                    password=group["password"],
+                    countries=countries,
+                    counts=counts,
+                    thresholds=thresholds,
+                )
+            except Exception as exc:
+                raise CommandError(
+                    "P2 live geography could not be loaded for account "
+                    f"{account_key[:12]} ({type(exc).__name__})."
+                ) from exc
+            pool_specs = catalog_specs
+            if not options["catalog_only"] and not options["prefill_city_pools"]:
+                pool_specs = {
+                    key: value
+                    for key, value in catalog_specs.items()
+                    if not key[2]
+                }
+            catalog_specs_by_account[account_key] = catalog_specs
+            pool_specs_by_account[account_key] = pool_specs
+            regions_by_account[account_key] = regions
+            summaries_by_account[account_key] = geo_summary
 
-        expected = len(bundles) * len(specs)
+        expected = sum(
+            len(group["bundles"]) * len(pool_specs_by_account[account_key])
+            for account_key, group in account_groups.items()
+        )
         self.stdout.write(
             f"Offices={len(offices)} bundles={len(bundles)} "
-            f"countries={len(countries)} locations_per_bundle={len(specs)} "
-            f"expected_targets={expected} nodes={geo_summary['nodes_seen']} "
-            f"states={geo_summary['states']} cities={geo_summary['cities']}"
+            f"accounts={len(account_groups)} countries={len(countries)} "
+            f"expected_targets={expected}"
         )
-        if geo_summary["skipped_without_numeric_region"]:
-            self.stderr.write(
-                "Skipped live nodes without a numeric subdivision ID: "
-                f"{geo_summary['skipped_without_numeric_region']}"
+        for account_key, geo_summary in summaries_by_account.items():
+            self.stdout.write(
+                f"Account={account_key[:12]} "
+                f"bundles={len(account_groups[account_key]['bundles'])} "
+                f"locations={len(pool_specs_by_account[account_key])} "
+                f"nodes={geo_summary['nodes_seen']} "
+                f"states={geo_summary['states']} cities={geo_summary['cities']}"
             )
-        if geo_summary["skipped_long_city"]:
-            self.stderr.write(
-                "Skipped city names longer than the target field: "
-                f"{geo_summary['skipped_long_city']}"
+            if geo_summary["skipped_without_numeric_region"]:
+                self.stderr.write(
+                    f"Account {account_key[:12]} skipped live nodes without "
+                    "a numeric subdivision ID: "
+                    f"{geo_summary['skipped_without_numeric_region']}"
+                )
+            if geo_summary["skipped_long_city"]:
+                self.stderr.write(
+                    f"Account {account_key[:12]} skipped city names longer "
+                    "than the target field: "
+                    f"{geo_summary['skipped_long_city']}"
+                )
+
+        if options["catalog_only"]:
+            synced_regions = 0
+            synced_cities = 0
+            stale_cities = 0
+            for account_key in account_groups:
+                synced_regions += _sync_region_catalog(
+                    regions_by_account[account_key], countries
+                )
+                changed, stale = _sync_city_catalog(
+                    account_key,
+                    catalog_specs_by_account[account_key],
+                    countries,
+                )
+                synced_cities += changed
+                stale_cities += stale
+            self.stdout.write(
+                self.style.SUCCESS(
+                    "CATALOG_DONE "
+                    f"regions_synced={synced_regions} "
+                    f"cities_synced={synced_cities} "
+                    f"cities_deactivated={stale_cities}"
+                )
             )
+            return
 
         current = list(
             ProxyPoolTarget.objects.filter(
@@ -397,28 +549,68 @@ class Command(BaseCommand):
                 )
             )
         )
+        def specs_for_bundle(bundle_id: int):
+            account_key = bundle_account.get(bundle_id, "")
+            return pool_specs_by_account.get(account_key, {})
+
         selected = [
             target
             for target in current
-            if (target.country_code, target.region, target.city) in specs
+            if (
+                target.country_code,
+                target.region,
+                target.city,
+            ) in specs_for_bundle(target.config_bundle_id)
         ]
 
         if options["status_only"]:
-            self._status(
-                bundles,
-                specs,
-                [target for target in selected if target.active],
-            )
+            for account_key, group in account_groups.items():
+                group_bundle_ids = {
+                    bundle.pk for bundle in group["bundles"]
+                }
+                self.stdout.write(f"ACCOUNT {account_key[:12]}")
+                self._status(
+                    group["bundles"],
+                    pool_specs_by_account[account_key],
+                    [
+                        target
+                        for target in selected
+                        if target.active
+                        and target.config_bundle_id in group_bundle_ids
+                    ],
+                )
             return
 
-        synced_regions = _sync_region_catalog(regions, countries)
+        synced_regions = 0
+        synced_cities = 0
+        stale_cities = 0
+        for account_key in account_groups:
+            synced_regions += _sync_region_catalog(
+                regions_by_account[account_key], countries
+            )
+            changed_count, stale_count = _sync_city_catalog(
+                account_key,
+                catalog_specs_by_account[account_key],
+                countries,
+            )
+            synced_cities += changed_count
+            stale_cities += stale_count
         self.stdout.write(f"P2 region catalog rows synchronized: {synced_regions}")
+        self.stdout.write(
+            "P2 city catalog rows synchronized: "
+            f"{synced_cities}; deactivated: {stale_cities}"
+        )
 
         stale_target_ids = [
             target.pk
             for target in current
             if target.active
-            and (target.country_code, target.region, target.city) not in specs
+            and (options["prefill_city_pools"] or not target.city)
+            and (
+                target.country_code,
+                target.region,
+                target.city,
+            ) not in specs_for_bundle(target.config_bundle_id)
         ]
         if stale_target_ids:
             ProxyPoolTarget.objects.filter(pk__in=stale_target_ids).update(
@@ -439,11 +631,12 @@ class Command(BaseCommand):
         }
         missing_targets = []
         for bundle in bundles:
+            bundle_specs = specs_for_bundle(bundle.pk)
             for (country, region, city), (
                 _level,
                 target_count,
                 threshold,
-            ) in specs.items():
+            ) in bundle_specs.items():
                 key = (bundle.pk, country, region, city)
                 if key in existing:
                     continue
@@ -480,11 +673,17 @@ class Command(BaseCommand):
         targets = [
             target
             for target in targets
-            if (target.country_code, target.region, target.city) in specs
+            if (
+                target.country_code,
+                target.region,
+                target.city,
+            ) in specs_for_bundle(target.config_bundle_id)
         ]
         changed = []
         for target in targets:
-            _level, target_count, threshold = specs[
+            _level, target_count, threshold = specs_for_bundle(
+                target.config_bundle_id
+            )[
                 (target.country_code, target.region, target.city)
             ]
             if (
