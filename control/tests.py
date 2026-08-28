@@ -516,8 +516,8 @@ class ControlApiTests(TestCase):
             country_code="US",
             region="1906",
             city="New York",
-            target_count=10,
-            replenish_below=2,
+            target_count=13,
+            replenish_below=3,
         )
         token = self.bootstrap().json()["access_token"]
 
@@ -544,6 +544,15 @@ class ControlApiTests(TestCase):
         stored = ProxyGenerationJob.objects.get(pk=job["id"])
         self.assertEqual(stored.region, "1906")
         self.assertEqual(stored.city, "New York")
+        target = ProxyPoolTarget.objects.get(
+            config_bundle=self.bundle,
+            provider_code="P2",
+            country_code="US",
+            region="1906",
+            city="New York",
+        )
+        self.assertEqual(target.target_count, 13)
+        self.assertEqual(target.replenish_below, 3)
 
     def test_p2_state_pool_is_synchronously_replenished_between_jobs(self):
         payload = self.bundle.get_payload()
@@ -798,8 +807,8 @@ class ControlApiTests(TestCase):
         self.assertEqual(response.status_code, 201)
         self.assertTrue(response.json()["allowed"])
         job = response.json()["job"]
-        self.assertEqual(job["candidate_count"], 10)
-        self.assertEqual(job["ready_count"], 10)
+        self.assertEqual(job["candidate_count"], 40)
+        self.assertEqual(job["ready_count"], 40)
         self.assertEqual(job["status"], "ready")
         stored = ProxyGenerationJob.objects.get(pk=job["id"])
         self.assertEqual(stored.region, "")
@@ -811,8 +820,9 @@ class ControlApiTests(TestCase):
             region="",
             city="London",
         )
-        self.assertEqual(target.target_count, 10)
-        self.assertEqual(target.entries.filter(state="reserved").count(), 10)
+        self.assertEqual(target.target_count, 40)
+        self.assertEqual(target.replenish_below, 8)
+        self.assertEqual(target.entries.filter(state="reserved").count(), 40)
 
     def test_p2_proxy_job_rejects_city_outside_prefilled_catalog(self):
         p2 = Provider.objects.create(code="P2", display_name="P2", display_order=2)
@@ -882,8 +892,8 @@ class ControlApiTests(TestCase):
 
         self.assertEqual(response.status_code, 201)
         job = response.json()["job"]
-        self.assertEqual(job["candidate_count"], 10)
-        self.assertEqual(job["ready_count"], 10)
+        self.assertEqual(job["candidate_count"], 40)
+        self.assertEqual(job["ready_count"], 40)
         self.assertEqual(job["status"], "ready")
         second = self.client.post(
             reverse("control:proxy-job-create"),
@@ -901,8 +911,8 @@ class ControlApiTests(TestCase):
         )
         self.assertEqual(second.status_code, 201)
         second_job = second.json()["job"]
-        self.assertEqual(second_job["candidate_count"], 10)
-        self.assertEqual(second_job["ready_count"], 10)
+        self.assertEqual(second_job["candidate_count"], 40)
+        self.assertEqual(second_job["ready_count"], 40)
         self.assertEqual(second_job["status"], "ready")
         target = ProxyPoolTarget.objects.get(
             config_bundle=self.bundle,
@@ -911,7 +921,9 @@ class ControlApiTests(TestCase):
             region="",
             city="London",
         )
-        self.assertEqual(target.entries.filter(state="reserved").count(), 20)
+        self.assertEqual(target.target_count, 40)
+        self.assertEqual(target.replenish_below, 8)
+        self.assertEqual(target.entries.filter(state="reserved").count(), 80)
 
     def test_p2_state_city_catalog_is_independent_of_bundle_inventory(self):
         p2 = Provider.objects.create(code="P2", display_name="P2", display_order=2)
