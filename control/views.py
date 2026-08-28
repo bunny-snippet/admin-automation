@@ -167,7 +167,7 @@ def _catalog() -> list[dict[str, Any]]:
         if not country_files:
             continue
         regions_by_country: dict[str, list[dict[str, str]]] = {}
-        if provider.code in {"P1", "P2", "P4"}:
+        if provider.code in {"P1", "P2", "P3", "P4"}:
             for region in provider.region_catalog.all():
                 regions_by_country.setdefault(region.country_code, []).append(
                     {
@@ -776,6 +776,8 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
         body = json.loads(request.body.decode("utf-8"))
         provider_code = str(body.get("provider") or "").strip().upper()
         country_code = str(body.get("country") or "").strip().upper()
+        if country_code == "UK":
+            country_code = "GB"
         region = str(body.get("region") or "").strip()[:120]
         city = str(body.get("city") or "").strip()[:120]
         submitted_count = int(body.get("count") or 1)
@@ -794,8 +796,15 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
             or not requested_count <= candidate_count <= 50
         ):
             raise ValueError("Invalid proxy request")
-        city = ""
-        if provider_code not in {"P1", "P2"}:
+        if provider_code != "P3":
+            city = ""
+        # Massive resolves city targeting independently and documents that a
+        # city takes precedence over subdivision. Store city pools without a
+        # region so the same ready inventory serves both country+city and
+        # country+state+city selections.
+        if provider_code == "P3" and city:
+            region = ""
+        if provider_code not in {"P1", "P2", "P3"}:
             region = ""
         elif region and not ProxyRegionCatalog.objects.filter(
             provider__code=provider_code,
