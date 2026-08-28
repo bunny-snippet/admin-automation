@@ -4,5 +4,7 @@ __pycache__/
 .env
 .venv/
 staticfiles/
+media/
+private-desktop-releases/
 .pytest_cache/
 catalog_seed/*/*.txt

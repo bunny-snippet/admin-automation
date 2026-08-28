@@ -78,6 +78,11 @@ urlpatterns = [
     path("api/v1/profile-domains/", views.profile_domains, name="profile-domains"),
     path("api/v1/extensions/<int:package_id>/", views.extension_package, name="extension-package"),
     path(
+        "api/v1/desktop-releases/<int:release_id>/",
+        views.desktop_release_download,
+        name="desktop-release-download",
+    ),
+    path(
         "api/v1/proxies/<str:provider_code>/<str:country_code>/",
         views.proxy_file,
         name="proxy-file",

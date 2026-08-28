@@ -1,27 +1,33 @@
 from __future__ import annotations
 
+import base64
 import io
 import json
 import re
+import tempfile
 import zipfile
 from datetime import timedelta
 from unittest import mock
 from urllib.parse import unquote, urlsplit
 
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from .admin import import_catalog_zip
+from .admin import DesktopReleaseForm, import_catalog_zip
 from .geo_catalog import ensure_global_country_catalog, ensure_p4_region_catalog
 from .models import (
-    BootstrapAudit, ClientAccess, ClientAccessIP, ConfigBundle, ExtensionPackage, ProfileDomainActivity,
+    BootstrapAudit, ClientAccess, ClientAccessIP, ConfigBundle, DesktopRelease, ExtensionPackage, ProfileDomainActivity,
     MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyInventoryAlert, ProxyPoolTarget,
     ProxyReservation, ProfileCreateLease, ProfileCreateQueue, ProxyRegionCatalog,
 )
+from .release_updates import canonical_release_payload, verify_release_signature
 from .proxy_jobs import reserve_pool_proxies
 from .tasks import (
     _generate, ensure_pool_targets, provider_is_configured, queue_refill_proxy_pool,
@@ -1501,3 +1507,325 @@ class StaffPanelTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertFalse(response.json()["ok"])
+
+
+@override_settings(
+    TRUST_PROXY_HEADERS=False,
+    REQUIRE_REPORTED_IP_MATCH=True,
+    TRUST_APP_REPORTED_IPV4=False,
+    BOOTSTRAP_RATE_LIMIT_PER_MINUTE=100,
+    BOOTSTRAP_TOKEN_MAX_AGE=300,
+)
+class DesktopReleaseApiTests(TestCase):
+    def setUp(self):
+        self._media_directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self._media_directory.cleanup)
+        self._media_settings = override_settings(
+            MEDIA_ROOT=self._media_directory.name,
+            DESKTOP_RELEASE_ROOT=(
+                self._media_directory.name + "/private-desktop-releases"
+            ),
+        )
+        self._media_settings.enable()
+        self.addCleanup(self._media_settings.disable)
+
+        self.private_key = Ed25519PrivateKey.generate()
+        public_bytes = self.private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        self.public_key_b64 = base64.b64encode(public_bytes).decode("ascii")
+        self._key_patch = mock.patch(
+            "control.release_updates.DESKTOP_RELEASE_PUBLIC_KEY_B64",
+            self.public_key_b64,
+        )
+        self._key_patch.start()
+        self.addCleanup(self._key_patch.stop)
+
+        self.bundle = ConfigBundle(name="Release test bundle", version=1)
+        self.bundle.set_payload({"APP_API_KEY": "test-key"})
+        self.bundle.save()
+        self.client_access = ClientAccess.objects.create(
+            name="Release test device",
+            ipv4="203.0.113.80",
+            device_id="release-device",
+            office_name="Release Office",
+            system_number="8",
+            config_bundle=self.bundle,
+            release_channel=ClientAccess.RELEASE_CHANNEL_PUBLIC,
+        )
+
+    def bootstrap(
+        self,
+        *,
+        app_build=0,
+        app_channel="public",
+        update_protocol=None,
+    ):
+        body = {
+            "reported_ipv4": "203.0.113.80",
+            "app_version": "1.7.35",
+            "device_id": "release-device",
+        }
+        if update_protocol is not None:
+            body.update(
+                {
+                    "app_build": app_build,
+                    "app_channel": app_channel,
+                    "update_protocol": update_protocol,
+                }
+            )
+        return self.client.post(
+            reverse("control:bootstrap"),
+            data=json.dumps(body),
+            content_type="application/json",
+            REMOTE_ADDR="203.0.113.80",
+        )
+
+    def create_release(
+        self,
+        *,
+        build_number,
+        version=None,
+        channel=DesktopRelease.CHANNEL_PUBLIC,
+        mode=DesktopRelease.MODE_OPTIONAL,
+        target_offices=None,
+        target_device_ids=None,
+        publish=True,
+        payload=None,
+    ):
+        raw = payload or f"MZquest-release-{build_number}".encode("ascii")
+        release = DesktopRelease(
+            channel=channel,
+            version=version or f"1.7.{build_number}",
+            build_number=build_number,
+            mode=mode,
+            target_offices=target_offices or [],
+            target_device_ids=target_device_ids or [],
+            artifact=SimpleUploadedFile(
+                f"Quest-Automation-{build_number}.exe",
+                raw,
+                content_type="application/vnd.microsoft.portable-executable",
+            ),
+        )
+        release.full_clean()
+        release.save()
+        release.signature_b64 = base64.b64encode(
+            self.private_key.sign(canonical_release_payload(release))
+        ).decode("ascii")
+        release.save(update_fields=("signature_b64", "updated_at"))
+        if publish:
+            release.status = DesktopRelease.STATUS_PUBLISHED
+            release.published_at = timezone.now()
+            release.save(update_fields=("status", "published_at", "updated_at"))
+        return release
+
+    def authenticated_headers(self):
+        token = self.bootstrap().json()["access_token"]
+        return {
+            "HTTP_AUTHORIZATION": f"Bearer {token}",
+            "HTTP_X_DEVICE_ID": "release-device",
+            "REMOTE_ADDR": "203.0.113.80",
+        }
+
+    def test_legacy_bootstrap_does_not_include_update_manifest(self):
+        response = self.bootstrap()
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("desktop_update", response.json())
+
+    def test_bootstrap_uses_assigned_channel_and_requires_channel_match(self):
+        public_release = self.create_release(build_number=35)
+        self.create_release(
+            build_number=60,
+            version="1.8.60",
+            channel=DesktopRelease.CHANNEL_TESTING,
+        )
+
+        mismatch = self.bootstrap(
+            app_build=0,
+            app_channel="testing",
+            update_protocol=1,
+        )
+        self.assertIsNone(mismatch.json()["desktop_update"])
+
+        response = self.bootstrap(
+            app_build=0,
+            app_channel="public",
+            update_protocol=1,
+        )
+        manifest = response.json()["desktop_update"]
+        self.assertEqual(manifest["id"], public_release.pk)
+        self.assertEqual(manifest["channel"], "public")
+        self.assertEqual(
+            manifest["download_path"],
+            f"/api/v1/desktop-releases/{public_release.pk}/",
+        )
+        self.assertEqual(manifest["product"], "quest-automation")
+        self.assertEqual(manifest["schema_version"], 1)
+        self.assertEqual(manifest["signature"], public_release.signature_b64)
+
+    def test_bootstrap_selects_newer_applicable_release_only(self):
+        applicable = self.create_release(
+            build_number=40,
+            target_offices=["release office"],
+            target_device_ids=["release-device"],
+        )
+        self.create_release(
+            build_number=45,
+            target_offices=["Release Office"],
+            target_device_ids=["another-device"],
+        )
+        self.create_release(
+            build_number=50,
+            target_offices=["Another Office"],
+        )
+
+        response = self.bootstrap(
+            app_build=35,
+            app_channel="public",
+            update_protocol=1,
+        )
+        self.assertEqual(response.json()["desktop_update"]["id"], applicable.pk)
+
+        current = self.bootstrap(
+            app_build=applicable.build_number,
+            app_channel="public",
+            update_protocol=1,
+        )
+        self.assertIsNone(current.json()["desktop_update"])
+
+    def test_invalid_signature_is_rejected_and_skipped(self):
+        valid = self.create_release(build_number=70)
+        invalid = self.create_release(build_number=80, publish=False)
+        invalid.signature_b64 = base64.b64encode(b"x" * 64).decode("ascii")
+        invalid.save(update_fields=("signature_b64", "updated_at"))
+        with self.assertRaises(ValidationError):
+            verify_release_signature(invalid)
+        DesktopRelease.objects.filter(pk=invalid.pk).update(
+            status=DesktopRelease.STATUS_PUBLISHED,
+            published_at=timezone.now(),
+        )
+
+        response = self.bootstrap(
+            app_build=0,
+            app_channel="public",
+            update_protocol=1,
+        )
+        self.assertEqual(response.json()["desktop_update"]["id"], valid.pk)
+
+    def test_authenticated_scoped_download_streams_exact_signed_exe(self):
+        raw = b"MZexact-signed-release-bytes"
+        release = self.create_release(
+            build_number=90,
+            mode=DesktopRelease.MODE_MANDATORY,
+            target_offices=["Release Office"],
+            target_device_ids=["release-device"],
+            payload=raw,
+        )
+        with self.assertRaises(ValueError):
+            _ = release.artifact.url
+        response = self.client.get(
+            reverse("control:desktop-release-download", args=(release.pk,)),
+            **self.authenticated_headers(),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b"".join(response.streaming_content), raw)
+        self.assertEqual(response["X-Content-SHA256"], release.artifact_sha256)
+        self.assertEqual(int(response["Content-Length"]), len(raw))
+        self.assertIn("attachment", response["Content-Disposition"])
+        self.assertIn("no-store", response["Cache-Control"])
+
+    def test_saved_draft_form_renders_without_exposing_private_file_url(self):
+        release = self.create_release(build_number=95, publish=False)
+        html = DesktopReleaseForm(instance=release).as_p()
+        self.assertIn('type="file"', html)
+        self.assertNotIn("/media/", html)
+        self.assertNotIn(release.artifact.name, html)
+
+    def test_release_status_transitions_cannot_bypass_publish_validation(self):
+        with self.assertRaises(ValidationError):
+            DesktopRelease(
+                channel=DesktopRelease.CHANNEL_PUBLIC,
+                version="1.7.103",
+                build_number=103,
+                status=DesktopRelease.STATUS_REVOKED,
+                artifact=SimpleUploadedFile("new-revoked.exe", b"MZinvalid-state"),
+            ).save()
+
+        draft = self.create_release(build_number=104, publish=False)
+        draft.status = DesktopRelease.STATUS_REVOKED
+        with self.assertRaises(ValidationError):
+            draft.save(update_fields=("status", "updated_at"))
+
+    def test_release_version_rejects_unicode_digits_and_trailing_newline(self):
+        for version in ("١.٢.٣", "1.7.105\n"):
+            with self.subTest(version=repr(version)), self.assertRaises(
+                ValidationError
+            ):
+                DesktopRelease(
+                    channel=DesktopRelease.CHANNEL_PUBLIC,
+                    version=version,
+                    build_number=105,
+                    artifact=SimpleUploadedFile("invalid-version.exe", b"MZversion"),
+                ).save()
+
+    def test_replacing_and_deleting_draft_cleans_private_artifacts(self):
+        draft = self.create_release(build_number=106, publish=False)
+        storage = draft.artifact.storage
+        original_name = draft.artifact.name
+        self.assertTrue(storage.exists(original_name))
+
+        draft.artifact = SimpleUploadedFile(
+            "replacement.exe",
+            b"MZreplacement-release",
+        )
+        with self.captureOnCommitCallbacks(execute=True):
+            draft.save()
+        replacement_name = draft.artifact.name
+        self.assertNotEqual(original_name, replacement_name)
+        self.assertFalse(storage.exists(original_name))
+        self.assertTrue(storage.exists(replacement_name))
+
+        with self.captureOnCommitCallbacks(execute=True):
+            draft.delete()
+        self.assertFalse(storage.exists(replacement_name))
+
+    def test_admin_can_reopen_draft_and_published_release_without_file_url(self):
+        admin_user = get_user_model().objects.create_superuser(
+            username="release-admin",
+            email="release-admin@example.com",
+            password="test-admin-password",
+        )
+        draft = self.create_release(build_number=101, publish=False)
+        published = self.create_release(build_number=102)
+        self.client.force_login(admin_user)
+
+        for release in (draft, published):
+            response = self.client.get(
+                reverse("admin:control_desktoprelease_change", args=(release.pk,)),
+                secure=True,
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertContains(response, release.original_filename)
+            self.assertNotContains(response, "/media/")
+            self.assertNotContains(response, release.artifact.name)
+
+    def test_download_denies_wrong_channel_scope_and_missing_auth(self):
+        release = self.create_release(build_number=100)
+        url = reverse("control:desktop-release-download", args=(release.pk,))
+
+        missing_auth = self.client.get(url, REMOTE_ADDR="203.0.113.80")
+        self.assertEqual(missing_auth.status_code, 403)
+
+        headers = self.authenticated_headers()
+        release.target_offices = ["Another Office"]
+        release.save(update_fields=("target_offices", "updated_at"))
+        wrong_scope = self.client.get(url, **headers)
+        self.assertEqual(wrong_scope.status_code, 403)
+
+        release.target_offices = []
+        release.save(update_fields=("target_offices", "updated_at"))
+        self.client_access.release_channel = ClientAccess.RELEASE_CHANNEL_TESTING
+        self.client_access.save(update_fields=("release_channel", "updated_at"))
+        wrong_channel = self.client.get(url, **headers)
+        self.assertEqual(wrong_channel.status_code, 403)

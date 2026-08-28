@@ -519,7 +519,12 @@ def panel_office_audit(request: HttpRequest) -> HttpResponse:
     opened_total = len(opened_ids)
     deleted_total = len(deleted_ids & opened_ids)
 
-    default_domains = {"ipapi.co", "www.ipapi.co"}
+    default_domains = {
+        "ipapi.co",
+        "www.ipapi.co",
+        "ipwho.is",
+        "www.ipwho.is",
+    }
     profile_domains: dict[tuple[int, str], set[str]] = {}
     profile_meta: dict[tuple[int, str], ProfileDomainActivity] = {}
     for row in domains:
