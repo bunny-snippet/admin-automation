@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import zipfile
 from datetime import timedelta
 from unittest import mock
@@ -10,7 +11,7 @@ from urllib.parse import unquote, urlsplit
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -26,6 +27,70 @@ from .tasks import (
     _generate, ensure_pool_targets, provider_is_configured, queue_refill_proxy_pool,
     refill_proxy_pool,
 )
+from .views import (
+    _decode_p3_legacy_location,
+    _legacy_p3_location_catalog,
+    _legacy_p3_location_id,
+    _legacy_p3_location_rows,
+)
+
+
+class LegacyP3LocationTests(SimpleTestCase):
+    def test_legacy_aliases_decode_to_existing_prefill_dimensions(self):
+        self.assertEqual(
+            _decode_p3_legacy_location(
+                "P3",
+                _legacy_p3_location_id("region", "GB", "ENG"),
+                "",
+                "",
+            ),
+            ("GB", "ENG", ""),
+        )
+        self.assertEqual(
+            _decode_p3_legacy_location(
+                "P3",
+                _legacy_p3_location_id("city", "GB", "London"),
+                "",
+                "",
+            ),
+            ("GB", "", "London"),
+        )
+        self.assertEqual(
+            _decode_p3_legacy_location("P3", "UK", "", ""),
+            ("GB", "", ""),
+        )
+
+    def test_legacy_flat_catalog_is_limited_to_selected_offices_and_versions(self):
+        client = ClientAccess(office_name="Spaze 822")
+        self.assertTrue(_legacy_p3_location_catalog(client, "1.7.33.0"))
+        self.assertFalse(_legacy_p3_location_catalog(client, "1.7.34"))
+        client.office_name = "Another office"
+        self.assertFalse(_legacy_p3_location_catalog(client, "1.7.33"))
+
+    def test_legacy_flat_rows_include_country_state_and_city_choices(self):
+        country = ProxyCountryFile(
+            country_code="GB",
+            country_name="United Kingdom",
+            version=1,
+            content_sha256="",
+        )
+        rows = _legacy_p3_location_rows([country])
+        identifiers = {row["id"] for row in rows}
+        self.assertIn("GB", identifiers)
+        self.assertIn(
+            _legacy_p3_location_id("region", "GB", "ENG"),
+            identifiers,
+        )
+        self.assertIn(
+            _legacy_p3_location_id("city", "GB", "London"),
+            identifiers,
+        )
+        self.assertTrue(
+            all(
+                re.fullmatch(r"[A-Za-z0-9_-]{1,32}", identifier)
+                for identifier in identifiers
+            )
+        )
 
 
 @override_settings(

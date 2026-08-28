@@ -7,6 +7,8 @@ import json
 import logging
 import re
 import secrets
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from datetime import timedelta, timezone as datetime_timezone
@@ -43,6 +45,131 @@ from .openapi import OPENAPI_SCHEMA, SWAGGER_HTML
 
 logger = logging.getLogger("control")
 TOKEN_SALT = "warrior-control-catalog-v1"
+LEGACY_P3_LOCATION_OFFICES = frozenset(
+    {"spaze 822", "welldone 011", "mh"}
+)
+LEGACY_P3_LOCATION_MAX_APP_VERSION = (1, 7, 33, 9999)
+P3_PREFILL_GEO_PATH = (
+    Path(__file__).resolve().parent / "data" / "p3_prefill_geo.json"
+)
+
+
+@lru_cache(maxsize=1)
+def _p3_prefill_geography() -> dict[str, dict[str, Any]]:
+    try:
+        payload = json.loads(P3_PREFILL_GEO_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        logger.exception("Could not load the bundled P3 geography catalog")
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _app_version_tuple(value: str) -> tuple[int, ...]:
+    parts = re.findall(r"\d+", str(value or ""))
+    return tuple(int(part) for part in parts[:4])
+
+
+def _legacy_p3_location_catalog(client: ClientAccess, app_version: str) -> bool:
+    if str(client.office_name or "").strip().casefold() not in LEGACY_P3_LOCATION_OFFICES:
+        return False
+    parsed = _app_version_tuple(app_version)
+    return not parsed or parsed <= LEGACY_P3_LOCATION_MAX_APP_VERSION
+
+
+def _legacy_p3_location_id(kind: str, country_code: str, value: str) -> str:
+    prefix = "P3R" if kind == "region" else "P3C"
+    country = str(country_code or "").strip().upper()
+    digest = hashlib.sha256(
+        f"{kind}\0{country}\0{value}".encode("utf-8")
+    ).hexdigest()[:24]
+    return f"{prefix}_{country}_{digest}"
+
+
+@lru_cache(maxsize=1)
+def _legacy_p3_location_aliases() -> dict[str, tuple[str, str, str]]:
+    aliases: dict[str, tuple[str, str, str]] = {}
+    for country_code, details in _p3_prefill_geography().items():
+        country = str(country_code or "").strip().upper()
+        for region in details.get("regions", []):
+            code = str(region.get("code") or "").strip()
+            if code:
+                aliases[_legacy_p3_location_id("region", country, code)] = (
+                    country,
+                    code,
+                    "",
+                )
+        for city in details.get("cities", []):
+            city_name = str(city or "").strip()
+            if city_name:
+                aliases[_legacy_p3_location_id("city", country, city_name)] = (
+                    country,
+                    "",
+                    city_name,
+                )
+    return aliases
+
+
+def _legacy_p3_location_rows(
+    country_files: list[ProxyCountryFile],
+) -> list[dict[str, Any]]:
+    geography = _p3_prefill_geography()
+    rows: list[dict[str, Any]] = []
+    for country in country_files:
+        base = {
+            "id": country.country_code,
+            "name": country.country_name,
+            "version": country.version,
+            "sha256": country.content_sha256,
+            "regions": [],
+        }
+        rows.append(base)
+        details = geography.get(country.country_code, {})
+        for region in details.get("regions", []):
+            code = str(region.get("code") or "").strip()
+            name = str(region.get("name") or "").strip()
+            if code and name:
+                rows.append(
+                    {
+                        **base,
+                        "id": _legacy_p3_location_id(
+                            "region",
+                            country.country_code,
+                            code,
+                        ),
+                        "name": f"{country.country_name} - STATE - {name}",
+                    }
+                )
+        for city in details.get("cities", []):
+            city_name = str(city or "").strip()
+            if city_name and "|" not in city_name:
+                rows.append(
+                    {
+                        **base,
+                        "id": _legacy_p3_location_id(
+                            "city",
+                            country.country_code,
+                            city_name,
+                        ),
+                        "name": f"{country.country_name} - CITY - {city_name}",
+                    }
+                )
+    return rows
+
+
+def _decode_p3_legacy_location(
+    provider_code: str,
+    raw_country: str,
+    region: str,
+    city: str,
+) -> tuple[str, str, str]:
+    raw = str(raw_country or "").strip()
+    if provider_code != "P3" or not raw.startswith(("P3R_", "P3C_")):
+        country_code = raw.upper()
+        return ("GB" if country_code == "UK" else country_code, region, city)
+    decoded = _legacy_p3_location_aliases().get(raw)
+    if decoded is None:
+        raise ValueError("Unsupported legacy P3 location")
+    return decoded
 
 
 def _json_response(payload: dict[str, Any], status: int = 200) -> JsonResponse:
@@ -150,7 +277,7 @@ def _denied(
     )
 
 
-def _catalog() -> list[dict[str, Any]]:
+def _catalog(*, flatten_p3_locations: bool = False) -> list[dict[str, Any]]:
     active_files = ProxyCountryFile.objects.filter(active=True).only(
         "provider_id", "country_code", "country_name", "version", "content_sha256"
     )
@@ -175,19 +302,22 @@ def _catalog() -> list[dict[str, Any]]:
                         "name": region.region_name,
                     }
                 )
+        countries = [
+            {
+                "id": row.country_code,
+                "name": row.country_name,
+                "version": row.version,
+                "sha256": row.content_sha256,
+                "regions": regions_by_country.get(row.country_code, []),
+            }
+            for row in country_files
+        ]
+        if provider.code == "P3" and flatten_p3_locations:
+            countries = _legacy_p3_location_rows(country_files)
         result.append({
             "id": provider.code,
             "name": provider.display_name,
-            "countries": [
-                {
-                    "id": row.country_code,
-                    "name": row.country_name,
-                    "version": row.version,
-                    "sha256": row.content_sha256,
-                    "regions": regions_by_country.get(row.country_code, []),
-                }
-                for row in country_files
-            ],
+            "countries": countries,
         })
     return result
 
@@ -384,7 +514,12 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
                 "browser_group_name": group_name,
                 "profile_name": profile_name,
             },
-            "catalog": {"providers": _catalog(), "extensions": [
+            "catalog": {"providers": _catalog(
+                flatten_p3_locations=_legacy_p3_location_catalog(
+                    client,
+                    app_version,
+                )
+            ), "extensions": [
                 {"id": item.pk, "name": item.name, "filename": item.filename,
                  "version": item.version, "sha256": item.package_sha256,
                  "is_top": item.is_top, "status": item.status}
@@ -775,11 +910,15 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
         client = _authenticated_client(request)
         body = json.loads(request.body.decode("utf-8"))
         provider_code = str(body.get("provider") or "").strip().upper()
-        country_code = str(body.get("country") or "").strip().upper()
-        if country_code == "UK":
-            country_code = "GB"
+        raw_country = str(body.get("country") or "").strip()
         region = str(body.get("region") or "").strip()[:120]
         city = str(body.get("city") or "").strip()[:120]
+        country_code, region, city = _decode_p3_legacy_location(
+            provider_code,
+            raw_country,
+            region,
+            city,
+        )
         submitted_count = int(body.get("count") or 1)
         requested_count = submitted_count
         candidate_count = int(
