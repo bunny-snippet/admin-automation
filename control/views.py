@@ -983,7 +983,7 @@ def desktop_release_download(request: HttpRequest, release_id: int) -> HttpRespo
     return response
 
 
-def _ensure_exact_city_inventory(
+def _ensure_dynamic_inventory(
     *,
     client: ClientAccess,
     provider_code: str,
@@ -992,12 +992,20 @@ def _ensure_exact_city_inventory(
     city: str,
     minimum_available: int,
 ) -> ProxyPoolTarget:
-    """Generate a small city pool locally while the caller's transaction is open.
+    """Ensure one P2/P3 scope has enough candidates for the current request.
 
     P2/P3 API proxy generation only builds signed-in proxy usernames; it does
-    not make a provider network request.  Keeping this path synchronous avoids
-    both a Celery wait and millions of per-bundle pre-generated city rows.
+    not make a provider network request. Keeping this path synchronous prevents
+    a quality-check request from draining a state/city pool while automatic
+    Celery refills are disabled. Existing administrator-defined pool sizes are
+    preserved; the level defaults apply only when the target is first created.
     """
+    if city:
+        target_count, replenish_below = 10, 2
+    elif region:
+        target_count, replenish_below = 50, 10
+    else:
+        target_count, replenish_below = 1000, 200
     target, _created = ProxyPoolTarget.objects.get_or_create(
         config_bundle=client.config_bundle,
         provider_code=provider_code,
@@ -1005,8 +1013,8 @@ def _ensure_exact_city_inventory(
         region=region,
         city=city,
         defaults={
-            "target_count": 10,
-            "replenish_below": 2,
+            "target_count": target_count,
+            "replenish_below": replenish_below,
             "active": True,
         },
     )
@@ -1015,20 +1023,10 @@ def _ensure_exact_city_inventory(
         .select_related("config_bundle")
         .get(pk=target.pk)
     )
-    changed_fields: list[str] = []
     if not target.active:
-        target.active = True
-        changed_fields.append("active")
-    desired = max(1, min(10, int(minimum_available)))
-    if target.target_count != 10:
-        target.target_count = 10
-        changed_fields.append("target_count")
-    if target.replenish_below != 2:
-        target.replenish_below = 2
-        changed_fields.append("replenish_below")
-    if changed_fields:
-        target.save(update_fields=tuple(changed_fields) + ("updated_at",))
+        raise ValueError("Proxy pool target is inactive")
 
+    desired = max(1, int(minimum_available))
     available = target.entries.filter(state="available").count()
     needed = max(0, desired - available)
     if not needed:
@@ -1087,6 +1085,13 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
             raise ValueError("Invalid proxy request")
         if provider_code not in {"P2", "P3"}:
             city = ""
+        if provider_code in {"P2", "P3"} and not ProxyCountryFile.objects.filter(
+            provider__code=provider_code,
+            provider__active=True,
+            country_code=country_code,
+            active=True,
+        ).exists():
+            raise ValueError("Unsupported provider country")
         # Massive resolves city targeting independently and documents that a
         # city takes precedence over subdivision. Store city pools without a
         # region so the same ready inventory serves both country+city and
@@ -1148,8 +1153,8 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
 
     try:
         with transaction.atomic():
-            if provider_code in {"P2", "P3"} and city:
-                _ensure_exact_city_inventory(
+            if provider_code in {"P2", "P3"}:
+                _ensure_dynamic_inventory(
                     client=client,
                     provider_code=provider_code,
                     country_code=country_code,

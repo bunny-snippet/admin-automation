@@ -545,6 +545,217 @@ class ControlApiTests(TestCase):
         self.assertEqual(stored.region, "1906")
         self.assertEqual(stored.city, "New York")
 
+    def test_p2_state_pool_is_synchronously_replenished_between_jobs(self):
+        payload = self.bundle.get_payload()
+        payload.update({
+            "P2_API_USERNAME": "proxy-user",
+            "P2_API_PASSWORD": "proxy-password",
+            "P2_PROTOCOL": "socks5",
+        })
+        self.bundle.set_payload(payload)
+        self.bundle.save()
+        p2 = Provider.objects.create(
+            code="P2", display_name="P2", display_order=2
+        )
+        ProxyCountryFile.objects.create(
+            provider=p2,
+            country_code="US",
+            country_name="United States",
+        )
+        ProxyRegionCatalog.objects.create(
+            provider=p2,
+            country_code="US",
+            region_code="1906",
+            region_name="New York",
+        )
+        target = ProxyPoolTarget.objects.create(
+            config_bundle=self.bundle,
+            provider_code="P2",
+            country_code="US",
+            region="1906",
+            target_count=73,
+            replenish_below=7,
+        )
+        token = self.bootstrap().json()["access_token"]
+        headers = {
+            "HTTP_AUTHORIZATION": f"Bearer {token}",
+            "HTTP_X_DEVICE_ID": "device-one",
+            "REMOTE_ADDR": "203.0.113.10",
+        }
+
+        for _index in range(2):
+            response = self.client.post(
+                reverse("control:proxy-job-create"),
+                data=json.dumps({
+                    "provider": "P2",
+                    "country": "US",
+                    "region": "1906",
+                    "count": 1,
+                    "candidate_count": 50,
+                }),
+                content_type="application/json",
+                **headers,
+            )
+            self.assertEqual(response.status_code, 201)
+            job = response.json()["job"]
+            self.assertEqual(job["status"], "ready")
+            self.assertEqual(job["ready_count"], 50)
+
+        target.refresh_from_db()
+        self.assertEqual(target.target_count, 73)
+        self.assertEqual(target.replenish_below, 7)
+        self.assertEqual(target.entries.filter(state="available").count(), 0)
+        self.assertEqual(target.entries.filter(state="reserved").count(), 100)
+        self.assertEqual(
+            target.entries.values("proxy_fingerprint").distinct().count(),
+            100,
+        )
+
+    def test_p3_country_pool_is_created_and_replenished_between_jobs(self):
+        payload = self.bundle.get_payload()
+        payload.update({
+            "P3_PROXY_USERNAME": "massive-user",
+            "P3_API_KEY": "massive-password",
+            "P3_PROTOCOL": "http",
+        })
+        self.bundle.set_payload(payload)
+        self.bundle.save()
+        p3 = Provider.objects.create(
+            code="P3", display_name="P3", display_order=3
+        )
+        ProxyCountryFile.objects.create(
+            provider=p3,
+            country_code="US",
+            country_name="United States",
+        )
+        token = self.bootstrap().json()["access_token"]
+        headers = {
+            "HTTP_AUTHORIZATION": f"Bearer {token}",
+            "HTTP_X_DEVICE_ID": "device-one",
+            "REMOTE_ADDR": "203.0.113.10",
+        }
+
+        for _index in range(2):
+            response = self.client.post(
+                reverse("control:proxy-job-create"),
+                data=json.dumps({
+                    "provider": "P3",
+                    "country": "US",
+                    "count": 1,
+                    "candidate_count": 50,
+                }),
+                content_type="application/json",
+                **headers,
+            )
+            self.assertEqual(response.status_code, 201)
+            job = response.json()["job"]
+            self.assertEqual(job["status"], "ready")
+            self.assertEqual(job["ready_count"], 50)
+
+        target = ProxyPoolTarget.objects.get(
+            config_bundle=self.bundle,
+            provider_code="P3",
+            country_code="US",
+            region="",
+            city="",
+        )
+        self.assertEqual(target.target_count, 1000)
+        self.assertEqual(target.replenish_below, 200)
+        self.assertEqual(target.entries.filter(state="available").count(), 0)
+        self.assertEqual(target.entries.filter(state="reserved").count(), 100)
+        self.assertEqual(
+            target.entries.values("proxy_fingerprint").distinct().count(),
+            100,
+        )
+
+    def test_dynamic_proxy_job_rejects_unknown_country(self):
+        p2 = Provider.objects.create(
+            code="P2", display_name="P2", display_order=2
+        )
+        ProxyCountryFile.objects.create(
+            provider=p2,
+            country_code="US",
+            country_name="United States",
+        )
+        token = self.bootstrap().json()["access_token"]
+
+        response = self.client.post(
+            reverse("control:proxy-job-create"),
+            data=json.dumps({
+                "provider": "P2",
+                "country": "ZZ",
+                "count": 1,
+            }),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+            HTTP_X_DEVICE_ID="device-one",
+            REMOTE_ADDR="203.0.113.10",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(response.json()["allowed"])
+        self.assertFalse(ProxyGenerationJob.objects.exists())
+        self.assertFalse(ProxyPoolTarget.objects.filter(provider_code="P2").exists())
+
+    def test_dynamic_proxy_job_rejects_inactive_country(self):
+        p2 = Provider.objects.create(
+            code="P2", display_name="P2", display_order=2
+        )
+        ProxyCountryFile.objects.create(
+            provider=p2,
+            country_code="US",
+            country_name="United States",
+            active=False,
+        )
+        token = self.bootstrap().json()["access_token"]
+
+        response = self.client.post(
+            reverse("control:proxy-job-create"),
+            data=json.dumps({
+                "provider": "P2",
+                "country": "US",
+                "count": 1,
+            }),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+            HTTP_X_DEVICE_ID="device-one",
+            REMOTE_ADDR="203.0.113.10",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(response.json()["allowed"])
+        self.assertFalse(ProxyGenerationJob.objects.exists())
+        self.assertFalse(ProxyPoolTarget.objects.filter(provider_code="P2").exists())
+
+    def test_dynamic_proxy_job_rejects_inactive_provider(self):
+        p3 = Provider.objects.create(
+            code="P3", display_name="P3", display_order=3, active=False
+        )
+        ProxyCountryFile.objects.create(
+            provider=p3,
+            country_code="GB",
+            country_name="United Kingdom",
+        )
+        token = self.bootstrap().json()["access_token"]
+
+        response = self.client.post(
+            reverse("control:proxy-job-create"),
+            data=json.dumps({
+                "provider": "P3",
+                "country": "GB",
+                "count": 1,
+            }),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+            HTTP_X_DEVICE_ID="device-one",
+            REMOTE_ADDR="203.0.113.10",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(response.json()["allowed"])
+        self.assertFalse(ProxyGenerationJob.objects.exists())
+        self.assertFalse(ProxyPoolTarget.objects.filter(provider_code="P3").exists())
+
     def test_p2_country_city_job_instantly_fills_missing_pool_and_caps_candidates(self):
         payload = self.bundle.get_payload()
         payload.update({
@@ -555,6 +766,11 @@ class ControlApiTests(TestCase):
         self.bundle.set_payload(payload)
         self.bundle.save()
         p2 = Provider.objects.create(code="P2", display_name="P2", display_order=2)
+        ProxyCountryFile.objects.create(
+            provider=p2,
+            country_code="GB",
+            country_name="United Kingdom",
+        )
         ProxyCityCatalog.objects.create(
             provider=p2,
             account_key=self.p2_account_key,
@@ -600,6 +816,11 @@ class ControlApiTests(TestCase):
 
     def test_p2_proxy_job_rejects_city_outside_prefilled_catalog(self):
         p2 = Provider.objects.create(code="P2", display_name="P2", display_order=2)
+        ProxyCountryFile.objects.create(
+            provider=p2,
+            country_code="US",
+            country_name="United States",
+        )
         ProxyRegionCatalog.objects.create(
             provider=p2,
             country_code="US",
@@ -634,6 +855,14 @@ class ControlApiTests(TestCase):
         })
         self.bundle.set_payload(payload)
         self.bundle.save()
+        p3 = Provider.objects.create(
+            code="P3", display_name="P3", display_order=3
+        )
+        ProxyCountryFile.objects.create(
+            provider=p3,
+            country_code="GB",
+            country_name="United Kingdom",
+        )
         token = self.bootstrap().json()["access_token"]
 
         response = self.client.post(
@@ -656,6 +885,25 @@ class ControlApiTests(TestCase):
         self.assertEqual(job["candidate_count"], 10)
         self.assertEqual(job["ready_count"], 10)
         self.assertEqual(job["status"], "ready")
+        second = self.client.post(
+            reverse("control:proxy-job-create"),
+            data=json.dumps({
+                "provider": "P3",
+                "country": "GB",
+                "city": "London",
+                "count": 1,
+                "candidate_count": 50,
+            }),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+            HTTP_X_DEVICE_ID="device-one",
+            REMOTE_ADDR="203.0.113.10",
+        )
+        self.assertEqual(second.status_code, 201)
+        second_job = second.json()["job"]
+        self.assertEqual(second_job["candidate_count"], 10)
+        self.assertEqual(second_job["ready_count"], 10)
+        self.assertEqual(second_job["status"], "ready")
         target = ProxyPoolTarget.objects.get(
             config_bundle=self.bundle,
             provider_code="P3",
@@ -663,7 +911,7 @@ class ControlApiTests(TestCase):
             region="",
             city="London",
         )
-        self.assertEqual(target.entries.filter(state="reserved").count(), 10)
+        self.assertEqual(target.entries.filter(state="reserved").count(), 20)
 
     def test_p2_state_city_catalog_is_independent_of_bundle_inventory(self):
         p2 = Provider.objects.create(code="P2", display_name="P2", display_order=2)
@@ -742,6 +990,11 @@ class ControlApiTests(TestCase):
     def test_p2_city_list_and_validation_are_isolated_by_geo_account(self):
         p2 = Provider.objects.create(
             code="P2", display_name="P2", display_order=2
+        )
+        ProxyCountryFile.objects.create(
+            provider=p2,
+            country_code="GB",
+            country_name="United Kingdom",
         )
         other_account_key = p2_geo_account_key("office-b@example.test")
         ProxyCityCatalog.objects.create(
