@@ -7,6 +7,7 @@ import re
 import tempfile
 import zipfile
 from datetime import timedelta
+from threading import Barrier, Lock, Thread
 from unittest import mock
 from urllib.parse import unquote, urlsplit
 
@@ -16,7 +17,14 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import SimpleTestCase, TestCase, override_settings
+from django.db import close_old_connections
+from django.test import (
+    SimpleTestCase,
+    TestCase,
+    TransactionTestCase,
+    override_settings,
+    skipUnlessDBFeature,
+)
 from django.urls import reverse
 from django.utils import timezone
 
@@ -29,9 +37,10 @@ from .geo_catalog import (
 from .models import (
     BootstrapAudit, ClientAccess, ClientAccessIP, ConfigBundle, DesktopRelease, ExtensionPackage, ProfileDomainActivity,
     MonitoredDomain, Provider, ProxyCityCatalog, ProxyCountryFile,
-    ProxyGenerationJob, ProxyInventoryAlert, ProxyPoolEntry, ProxyPoolTarget,
+    ProxyExitIPCooldown, ProxyGenerationJob, ProxyInventoryAlert, ProxyPoolEntry, ProxyPoolTarget,
     ProxyReservation, ProfileCreateLease, ProfileCreateQueue, ProxyRegionCatalog,
 )
+from .exit_ip_cooldown import claim_exit_ip
 from .release_updates import canonical_release_payload, verify_release_signature
 from .management.commands.prefill_p2_geo_pools import _sync_city_catalog
 from .proxy_jobs import reserve_pool_proxies
@@ -480,6 +489,383 @@ class ControlApiTests(TestCase):
         self.assertEqual(job["ready_count"], 5)
         self.assertEqual(len(job["proxies"]), 5)
         self.assertEqual(job["status"], "ready")
+
+    @override_settings(PROXY_EXIT_IP_COOLDOWN_SECONDS=90000)
+    def test_exit_ip_claim_is_global_and_duplicate_does_not_extend_cooldown(self):
+        first_job = ProxyGenerationJob.objects.create(
+            client=self.client_access,
+            provider_code="P1",
+            country_code="US",
+        )
+        first_reservation = ProxyReservation.objects.create(
+            client=self.client_access,
+            job=first_job,
+            provider_code="P1",
+            country_code="US",
+            proxy_fingerprint="exit-ip-first-reservation",
+        )
+        first_token = self.bootstrap().json()["access_token"]
+        first_headers = {
+            "HTTP_AUTHORIZATION": f"Bearer {first_token}",
+            "HTTP_X_DEVICE_ID": "device-one",
+            "REMOTE_ADDR": "203.0.113.10",
+        }
+
+        precheck = self.client.post(
+            reverse("control:proxy-exit-ip-claim"),
+            data=json.dumps(
+                {
+                    "action": "check",
+                    "provider": "P1",
+                    "exit_ip": "198.51.100.44",
+                    "job_id": first_job.pk,
+                    "reservation_id": first_reservation.pk,
+                }
+            ),
+            content_type="application/json",
+            **first_headers,
+        )
+        self.assertEqual(precheck.status_code, 200)
+        self.assertFalse(precheck.json()["duplicate"])
+        self.assertEqual(ProxyExitIPCooldown.objects.count(), 0)
+
+        accepted = self.client.post(
+            reverse("control:proxy-exit-ip-claim"),
+            data=json.dumps(
+                {
+                    "action": "claim",
+                    "provider": "P1",
+                    "exit_ip": "198.51.100.44",
+                    "job_id": first_job.pk,
+                    "reservation_id": first_reservation.pk,
+                    "fraud_score": 12,
+                }
+            ),
+            content_type="application/json",
+            **first_headers,
+        )
+        self.assertEqual(accepted.status_code, 200)
+        self.assertTrue(accepted.json()["claimed"])
+        self.assertFalse(accepted.json()["duplicate"])
+        cooldown = ProxyExitIPCooldown.objects.get()
+        original_claimed_at = cooldown.claimed_at
+        original_available_after = cooldown.available_after
+        self.assertEqual(
+            original_available_after - original_claimed_at,
+            timedelta(hours=25),
+        )
+
+        other_client = ClientAccess.objects.create(
+            name="Other office system",
+            ipv4="203.0.113.11",
+            device_id="device-two",
+            office_name="Other office",
+            system_number="2",
+            config_bundle=self.bundle,
+        )
+        other_job = ProxyGenerationJob.objects.create(
+            client=other_client,
+            provider_code="P3",
+            country_code="GB",
+        )
+        other_reservation = ProxyReservation.objects.create(
+            client=other_client,
+            job=other_job,
+            provider_code="P3",
+            country_code="GB",
+            proxy_fingerprint="exit-ip-other-reservation",
+        )
+        other_token = self.bootstrap(
+            reported="203.0.113.11",
+            remote="203.0.113.11",
+            device_id="device-two",
+        ).json()["access_token"]
+        other_headers = {
+            "HTTP_AUTHORIZATION": f"Bearer {other_token}",
+            "HTTP_X_DEVICE_ID": "device-two",
+            "REMOTE_ADDR": "203.0.113.11",
+        }
+        duplicate_payload = {
+            "provider": "P3",
+            "exit_ip": "198.51.100.44",
+            "job_id": other_job.pk,
+            "reservation_id": other_reservation.pk,
+        }
+        duplicate_check = self.client.post(
+            reverse("control:proxy-exit-ip-claim"),
+            data=json.dumps({**duplicate_payload, "action": "check"}),
+            content_type="application/json",
+            **other_headers,
+        )
+        self.assertEqual(duplicate_check.status_code, 200)
+        self.assertTrue(duplicate_check.json()["duplicate"])
+
+        duplicate_claim = self.client.post(
+            reverse("control:proxy-exit-ip-claim"),
+            data=json.dumps({**duplicate_payload, "action": "claim"}),
+            content_type="application/json",
+            **other_headers,
+        )
+        self.assertEqual(duplicate_claim.status_code, 200)
+        self.assertFalse(duplicate_claim.json()["claimed"])
+        self.assertTrue(duplicate_claim.json()["duplicate"])
+        self.assertEqual(duplicate_claim.json()["reason"], "exit_ip_cooldown")
+        cooldown.refresh_from_db()
+        self.assertEqual(cooldown.claimed_at, original_claimed_at)
+        self.assertEqual(cooldown.available_after, original_available_after)
+        self.assertEqual(cooldown.client, self.client_access)
+        self.assertEqual(cooldown.provider_code, "P1")
+        self.assertEqual(cooldown.duplicate_attempts, 1)
+
+    @override_settings(PROXY_EXIT_IP_COOLDOWN_SECONDS=90000)
+    def test_exit_ip_claim_exact_25_hour_boundary(self):
+        job = ProxyGenerationJob.objects.create(
+            client=self.client_access,
+            provider_code="P1",
+            country_code="US",
+        )
+
+        def reservation(number):
+            return ProxyReservation.objects.create(
+                client=self.client_access,
+                job=job,
+                provider_code="P1",
+                country_code="US",
+                proxy_fingerprint=f"boundary-reservation-{number}",
+            )
+
+        base = timezone.now()
+        first = claim_exit_ip(
+            client=self.client_access,
+            provider_code="P1",
+            exit_ip="198.51.100.45",
+            job=job,
+            reservation=reservation(1),
+            now=base,
+        )
+        self.assertTrue(first.claimed)
+        just_before = claim_exit_ip(
+            client=self.client_access,
+            provider_code="P1",
+            exit_ip="198.51.100.45",
+            job=job,
+            reservation=reservation(2),
+            now=base + timedelta(hours=25) - timedelta(microseconds=1),
+        )
+        self.assertFalse(just_before.claimed)
+        self.assertEqual(just_before.cooldown.available_after, base + timedelta(hours=25))
+
+        exact_boundary = claim_exit_ip(
+            client=self.client_access,
+            provider_code="P1",
+            exit_ip="198.51.100.45",
+            job=job,
+            reservation=reservation(3),
+            now=base + timedelta(hours=25),
+        )
+        self.assertTrue(exact_boundary.claimed)
+        self.assertEqual(exact_boundary.cooldown.claimed_at, base + timedelta(hours=25))
+        self.assertEqual(exact_boundary.cooldown.available_after, base + timedelta(hours=50))
+
+    @override_settings(PROXY_EXIT_IP_COOLDOWN_SECONDS=90000)
+    def test_exit_ip_ipv6_is_normalized_and_unique(self):
+        base = timezone.now()
+        first = claim_exit_ip(
+            client=self.client_access,
+            provider_code="P1",
+            exit_ip="2001:0db8:0000:0000:0000:0000:0000:0001",
+            now=base,
+        )
+        second = claim_exit_ip(
+            client=self.client_access,
+            provider_code="P4",
+            exit_ip="2001:db8::1",
+            now=base + timedelta(seconds=1),
+        )
+        self.assertTrue(first.claimed)
+        self.assertFalse(second.claimed)
+        self.assertEqual(ProxyExitIPCooldown.objects.count(), 1)
+        self.assertEqual(str(ProxyExitIPCooldown.objects.get().exit_ip), "2001:db8::1")
+        self.assertTrue(ProxyExitIPCooldown._meta.get_field("exit_ip").unique)
+
+        mapped = claim_exit_ip(
+            client=self.client_access,
+            provider_code="P1",
+            exit_ip="::ffff:198.51.100.49",
+            now=base,
+        )
+        mapped_duplicate = claim_exit_ip(
+            client=self.client_access,
+            provider_code="P2",
+            exit_ip="198.51.100.49",
+            now=base + timedelta(seconds=1),
+        )
+        self.assertTrue(mapped.claimed)
+        self.assertFalse(mapped_duplicate.claimed)
+        self.assertTrue(
+            ProxyExitIPCooldown.objects.filter(exit_ip="198.51.100.49").exists()
+        )
+
+    def test_exit_ip_claim_validates_reservation_ownership_and_payload(self):
+        other_client = ClientAccess.objects.create(
+            name="Other client",
+            ipv4="203.0.113.11",
+            device_id="device-two",
+            office_name="Other",
+            system_number="2",
+            config_bundle=self.bundle,
+        )
+        other_job = ProxyGenerationJob.objects.create(
+            client=other_client,
+            provider_code="P2",
+            country_code="US",
+        )
+        other_reservation = ProxyReservation.objects.create(
+            client=other_client,
+            job=other_job,
+            provider_code="P2",
+            country_code="US",
+            proxy_fingerprint="foreign-reservation",
+        )
+        token = self.bootstrap().json()["access_token"]
+        headers = {
+            "HTTP_AUTHORIZATION": f"Bearer {token}",
+            "HTTP_X_DEVICE_ID": "device-one",
+            "REMOTE_ADDR": "203.0.113.10",
+        }
+        forbidden = self.client.post(
+            reverse("control:proxy-exit-ip-claim"),
+            data=json.dumps(
+                {
+                    "provider": "P2",
+                    "exit_ip": "198.51.100.46",
+                    "reservation_id": other_reservation.pk,
+                }
+            ),
+            content_type="application/json",
+            **headers,
+        )
+        self.assertEqual(forbidden.status_code, 403)
+        invalid = self.client.post(
+            reverse("control:proxy-exit-ip-claim"),
+            data=json.dumps({"provider": "P1", "exit_ip": "not-an-ip"}),
+            content_type="application/json",
+            **headers,
+        )
+        self.assertEqual(invalid.status_code, 400)
+        self.assertFalse(ProxyExitIPCooldown.objects.exists())
+
+    def test_exit_ip_claim_supports_legacy_path_without_job_or_reservation(self):
+        token = self.bootstrap().json()["access_token"]
+        response = self.client.post(
+            reverse("control:proxy-exit-ip-claim"),
+            data=json.dumps(
+                {
+                    "provider": "P4",
+                    "exit_ip": "198.51.100.48",
+                }
+            ),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+            HTTP_X_DEVICE_ID="device-one",
+            REMOTE_ADDR="203.0.113.10",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["claimed"])
+        row = ProxyExitIPCooldown.objects.get(exit_ip="198.51.100.48")
+        self.assertIsNone(row.job_id)
+        self.assertIsNone(row.reservation_id)
+        self.assertEqual(row.provider_code, "P4")
+
+    @override_settings(PROXY_EXIT_IP_COOLDOWN_SECONDS=90000)
+    def test_same_reservation_score_followup_is_idempotent_without_extending(self):
+        target = ProxyPoolTarget.objects.create(
+            config_bundle=self.bundle,
+            provider_code="P2",
+            country_code="US",
+        )
+        pool_entry = ProxyPoolEntry(
+            target=target,
+            proxy_fingerprint="score-followup-pool-entry",
+            state="reserved",
+            reserved_client=self.client_access,
+        )
+        pool_entry.set_proxy("host:1000:user:pass")
+        pool_entry.save()
+        job = ProxyGenerationJob.objects.create(
+            client=self.client_access,
+            provider_code="P2",
+            country_code="US",
+        )
+        reservation = ProxyReservation.objects.create(
+            client=self.client_access,
+            job=job,
+            pool_entry=pool_entry,
+            provider_code="P2",
+            country_code="US",
+            proxy_fingerprint="score-followup-reservation",
+        )
+        base = timezone.now()
+        first = claim_exit_ip(
+            client=self.client_access,
+            provider_code="P2",
+            exit_ip="198.51.100.47",
+            job=job,
+            reservation=reservation,
+            now=base,
+        )
+        followup = claim_exit_ip(
+            client=self.client_access,
+            provider_code="P2",
+            exit_ip="198.51.100.47",
+            job=job,
+            reservation=reservation,
+            fraud_score=30,
+            now=base + timedelta(minutes=2),
+        )
+        self.assertTrue(followup.claimed)
+        self.assertTrue(followup.idempotent)
+        self.assertEqual(followup.cooldown.claimed_at, first.cooldown.claimed_at)
+        self.assertEqual(
+            followup.cooldown.available_after,
+            first.cooldown.available_after,
+        )
+        self.assertEqual(followup.cooldown.fraud_score, 30)
+        pool_entry.refresh_from_db()
+        self.assertEqual(str(pool_entry.exit_ip), "198.51.100.47")
+        self.assertEqual(pool_entry.fraud_score, 30)
+
+        expired_replay = claim_exit_ip(
+            client=self.client_access,
+            provider_code="P2",
+            exit_ip="198.51.100.47",
+            job=job,
+            reservation=reservation,
+            now=base + timedelta(hours=25),
+        )
+        self.assertTrue(expired_replay.claimed)
+        self.assertFalse(expired_replay.idempotent)
+        self.assertEqual(expired_replay.cooldown.claimed_at, base + timedelta(hours=25))
+        self.assertEqual(
+            expired_replay.cooldown.available_after,
+            base + timedelta(hours=50),
+        )
+        competing_reservation = ProxyReservation.objects.create(
+            client=self.client_access,
+            job=job,
+            provider_code="P2",
+            country_code="US",
+            proxy_fingerprint="score-followup-competitor",
+        )
+        competing = claim_exit_ip(
+            client=self.client_access,
+            provider_code="P2",
+            exit_ip="198.51.100.47",
+            job=job,
+            reservation=competing_reservation,
+            now=base + timedelta(hours=25),
+        )
+        self.assertFalse(competing.claimed)
 
     def test_p2_proxy_job_preserves_state_and_city(self):
         payload = self.bundle.get_payload()
@@ -1446,10 +1832,97 @@ class ControlApiTests(TestCase):
         self.assertEqual(schema_response.status_code, 200)
         self.assertEqual(schema_response.json()["openapi"], "3.1.0")
         self.assertIn("/api/v1/bootstrap/", schema_response.json()["paths"])
+        self.assertIn(
+            "/api/v1/proxy-exit-claims/",
+            schema_response.json()["paths"],
+        )
+        claim_schema = schema_response.json()["components"]["schemas"][
+            "ExitIPClaimRequest"
+        ]
+        self.assertEqual(
+            claim_schema["properties"]["action"]["enum"],
+            ["check", "claim"],
+        )
 
         docs_response = self.client.get(reverse("control:swagger-docs"))
         self.assertEqual(docs_response.status_code, 200)
         self.assertContains(docs_response, "SwaggerUIBundle")
+
+
+class ProxyExitIPCooldownConcurrencyTests(TransactionTestCase):
+    def setUp(self):
+        self.bundle = ConfigBundle(name="Concurrent cooldown", version=1)
+        self.bundle.set_payload({})
+        self.bundle.save()
+        self.client_access = ClientAccess.objects.create(
+            name="Concurrent client",
+            ipv4="203.0.113.80",
+            device_id="concurrent-device",
+            office_name="Concurrent office",
+            system_number="1",
+            config_bundle=self.bundle,
+        )
+        self.job = ProxyGenerationJob.objects.create(
+            client=self.client_access,
+            provider_code="P1",
+            country_code="US",
+        )
+        self.reservations = [
+            ProxyReservation.objects.create(
+                client=self.client_access,
+                job=self.job,
+                provider_code="P1",
+                country_code="US",
+                proxy_fingerprint=f"concurrent-reservation-{number}",
+            )
+            for number in range(2)
+        ]
+
+    @skipUnlessDBFeature("has_select_for_update")
+    @override_settings(PROXY_EXIT_IP_COOLDOWN_SECONDS=90000)
+    def test_concurrent_first_claim_has_exactly_one_winner(self):
+        barrier = Barrier(2)
+        result_lock = Lock()
+        results = []
+        errors = []
+        claimed_at = timezone.now()
+
+        def worker(reservation_id):
+            close_old_connections()
+            try:
+                client = ClientAccess.objects.get(pk=self.client_access.pk)
+                reservation = ProxyReservation.objects.select_related("job").get(
+                    pk=reservation_id
+                )
+                barrier.wait(timeout=10)
+                result = claim_exit_ip(
+                    client=client,
+                    provider_code="P1",
+                    exit_ip="198.51.100.81",
+                    job=reservation.job,
+                    reservation=reservation,
+                    now=claimed_at,
+                )
+                with result_lock:
+                    results.append(result.claimed)
+            except BaseException as exc:  # surfaced by the main test thread
+                with result_lock:
+                    errors.append(exc)
+            finally:
+                close_old_connections()
+
+        threads = [
+            Thread(target=worker, args=(reservation.pk,))
+            for reservation in self.reservations
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=20)
+
+        self.assertFalse(errors)
+        self.assertEqual(sorted(results), [False, True])
+        self.assertEqual(ProxyExitIPCooldown.objects.count(), 1)
 
 
 class ProxyPoolTaskTests(TestCase):
