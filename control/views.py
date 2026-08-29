@@ -32,6 +32,12 @@ from .models import (
     ProxyPoolEntry, ProxyPoolTarget, ProxyReservation, ProxyRegionCatalog,
 )
 from .geo_catalog import p2_geo_account_key_from_config
+from .exit_ip_cooldown import (
+    check_exit_ip,
+    claim_exit_ip,
+    cooldown_seconds,
+    normalize_exit_ip,
+)
 from .release_updates import (
     desktop_update_manifest,
     release_applies_to_client,
@@ -1241,6 +1247,161 @@ def proxy_job_detail(request: HttpRequest, job_id: int) -> JsonResponse:
             ClientAccess.DoesNotExist, ProxyGenerationJob.DoesNotExist):
         return _json_response({"allowed": False, "message": "Access denied."}, status=403)
     return _json_response({"allowed": True, "job": _job_payload(job)})
+
+
+@csrf_exempt
+@require_POST
+def proxy_exit_ip_claim(request: HttpRequest) -> JsonResponse:
+    """Check or claim a tested proxy exit IP before profile-create.
+
+    ``check`` is a non-mutating optimization before IPQS. ``claim`` is the
+    authoritative atomic operation after quality acceptance (or immediately
+    after the connectivity probe while IPQS is off). Duplicate claims are a
+    normal candidate-selection result, so they return HTTP 200.
+    """
+    try:
+        client = _authenticated_client(request)
+    except (
+        ValueError,
+        signing.BadSignature,
+        signing.SignatureExpired,
+        ClientAccess.DoesNotExist,
+    ):
+        return _json_response(
+            {"allowed": False, "message": "Access denied."}, status=403
+        )
+
+    try:
+        body = json.loads(request.body.decode("utf-8"))
+        if not isinstance(body, dict):
+            raise ValueError("Invalid payload")
+        action = str(body.get("action") or "claim").strip().lower()
+        if action not in {"check", "claim"}:
+            raise ValueError("Invalid action")
+        exit_ip = normalize_exit_ip(body.get("exit_ip"))
+        provider_code = str(body.get("provider") or "").strip().upper()
+        if not re.fullmatch(r"[A-Z0-9_-]{1,32}", provider_code):
+            raise ValueError("Invalid provider")
+
+        raw_job_id = body.get("job_id")
+        raw_reservation_id = body.get("reservation_id")
+        job_id = int(raw_job_id) if raw_job_id not in (None, "") else None
+        reservation_id = (
+            int(raw_reservation_id)
+            if raw_reservation_id not in (None, "")
+            else None
+        )
+        if (job_id is not None and job_id < 1) or (
+            reservation_id is not None and reservation_id < 1
+        ):
+            raise ValueError("Invalid reference")
+        raw_score = body.get("fraud_score")
+        fraud_score = int(raw_score) if raw_score not in (None, "") else None
+        if fraud_score is not None and not 0 <= fraud_score <= 100:
+            raise ValueError("Invalid fraud score")
+    except (
+        ValueError,
+        TypeError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+    ):
+        return _json_response(
+            {"allowed": False, "message": "Invalid exit-IP claim."}, status=400
+        )
+
+    try:
+        job = (
+            ProxyGenerationJob.objects.get(pk=job_id, client=client)
+            if job_id is not None
+            else None
+        )
+        reservation = (
+            ProxyReservation.objects.select_related("job", "pool_entry").get(
+                pk=reservation_id,
+                client=client,
+            )
+            if reservation_id is not None
+            else None
+        )
+        if reservation is not None:
+            if reservation.provider_code.upper() != provider_code:
+                raise ValueError("Provider mismatch")
+            if job is None:
+                job = reservation.job
+            elif reservation.job_id != job.pk:
+                raise ValueError("Job mismatch")
+        if job is not None and job.provider_code.upper() != provider_code:
+            raise ValueError("Provider mismatch")
+    except (
+        ValueError,
+        ProxyGenerationJob.DoesNotExist,
+        ProxyReservation.DoesNotExist,
+    ):
+        return _json_response(
+            {"allowed": False, "message": "Access denied."}, status=403
+        )
+
+    if action == "check":
+        checked = check_exit_ip(exit_ip=exit_ip, reservation=reservation)
+        row = checked.cooldown
+        payload = {
+            "allowed": True,
+            "action": "check",
+            "claimed": False,
+            "duplicate": checked.duplicate,
+            "idempotent": False,
+            "exit_ip": exit_ip,
+            "cooldown_seconds": cooldown_seconds(),
+            "retry_after_seconds": 0,
+        }
+        if row is not None:
+            now = timezone.now()
+            payload.update(
+                {
+                    "claimed_at": row.claimed_at.isoformat(),
+                    "available_after": row.available_after.isoformat(),
+                    "retry_after_seconds": max(
+                        0,
+                        int(
+                            (row.available_after - now).total_seconds()
+                            + 0.999999
+                        ),
+                    ),
+                }
+            )
+        if checked.duplicate:
+            payload["reason"] = "exit_ip_cooldown"
+        return _json_response(payload)
+
+    result = claim_exit_ip(
+        client=client,
+        provider_code=provider_code,
+        exit_ip=exit_ip,
+        job=job,
+        reservation=reservation,
+        fraud_score=fraud_score,
+    )
+    row = result.cooldown
+    now = timezone.now()
+    retry_after_seconds = max(
+        0,
+        int((row.available_after - now).total_seconds() + 0.999999),
+    )
+    payload = {
+        "allowed": True,
+        "action": "claim",
+        "claimed": result.claimed,
+        "duplicate": not result.claimed,
+        "idempotent": result.idempotent,
+        "exit_ip": str(row.exit_ip),
+        "claimed_at": row.claimed_at.isoformat(),
+        "available_after": row.available_after.isoformat(),
+        "cooldown_seconds": cooldown_seconds(),
+        "retry_after_seconds": retry_after_seconds,
+    }
+    if not result.claimed:
+        payload["reason"] = "exit_ip_cooldown"
+    return _json_response(payload)
 
 
 @require_GET

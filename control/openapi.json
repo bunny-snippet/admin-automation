@@ -229,6 +229,66 @@
         }
       }
     },
+    "/api/v1/proxy-exit-claims/": {
+      "post": {
+        "summary": "Check or claim a proxy exit IP for 25 hours",
+        "description": "Use action=check as a non-mutating optimization after the connectivity probe and before IPQS. After IPQS acceptance (or immediately after the probe when IPQS is off), use action=claim before browser profile creation. The atomic claim is global across every provider, office and device. A duplicate is HTTP 200 with duplicate=true and must be skipped.",
+        "operationId": "claimProxyExitIp",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Device-ID",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Client-IPv4",
+            "in": "header",
+            "required": false,
+            "description": "Required when app-reported IPv4 mode is enabled.",
+            "schema": {
+              "type": "string",
+              "format": "ipv4"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExitIPClaimRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Claim decision. claimed=false means choose another candidate; it does not extend the existing cooldown.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExitIPClaimResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
     "/api/v1/proxies/{provider_code}/{country_code}/": {
       "get": {
         "summary": "Download a provider/country proxy TXT catalog",
@@ -771,6 +831,115 @@
           "sha256",
           "content"
         ]
+      },
+      "ExitIPClaimRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "exit_ip",
+          "provider"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "check",
+              "claim"
+            ],
+            "default": "claim"
+          },
+          "exit_ip": {
+            "type": "string",
+            "format": "ip",
+            "description": "Exit IP observed through the tested proxy. IPv6 is canonicalized before comparison."
+          },
+          "provider": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,32}$"
+          },
+          "job_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "reservation_id": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "fraud_score": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 100
+          }
+        }
+      },
+      "ExitIPClaimResponse": {
+        "type": "object",
+        "required": [
+          "allowed",
+          "action",
+          "claimed",
+          "duplicate",
+          "idempotent",
+          "exit_ip",
+          "cooldown_seconds",
+          "retry_after_seconds"
+        ],
+        "properties": {
+          "allowed": {
+            "type": "boolean",
+            "const": true
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "check",
+              "claim"
+            ]
+          },
+          "claimed": {
+            "type": "boolean"
+          },
+          "duplicate": {
+            "type": "boolean"
+          },
+          "idempotent": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "exit_ip_cooldown"
+            ]
+          },
+          "exit_ip": {
+            "type": "string"
+          },
+          "claimed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "available_after": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "cooldown_seconds": {
+            "type": "integer",
+            "default": 90000
+          },
+          "retry_after_seconds": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
       }
     }
   }

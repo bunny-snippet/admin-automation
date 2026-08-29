@@ -888,6 +888,48 @@ class ProxyReservation(models.Model):
         return decrypt_text(self.proxy_ciphertext) if self.proxy_ciphertext else ""
 
 
+class ProxyExitIPCooldown(models.Model):
+    """Last globally accepted use of one normalized proxy exit IP."""
+
+    # Deliberately unique only by IP: the cooldown spans every provider,
+    # office and device rather than being scoped to a bundle or client.
+    exit_ip = models.GenericIPAddressField(unique=True)
+    client = models.ForeignKey(
+        ClientAccess,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="proxy_exit_ip_cooldowns",
+    )
+    job = models.ForeignKey(
+        ProxyGenerationJob,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="exit_ip_cooldowns",
+    )
+    reservation = models.ForeignKey(
+        ProxyReservation,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="exit_ip_cooldowns",
+    )
+    provider_code = models.CharField(max_length=32, blank=True)
+    fraud_score = models.IntegerField(blank=True, null=True)
+    claimed_at = models.DateTimeField()
+    available_after = models.DateTimeField(db_index=True)
+    duplicate_attempts = models.PositiveIntegerField(default=0)
+    last_duplicate_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("-claimed_at", "exit_ip")
+        verbose_name = "Proxy exit-IP cooldown"
+        verbose_name_plural = "Proxy exit-IP cooldowns"
+
+
 class ProfileCreateLease(models.Model):
     """Distributed guard for profile creation in one YS account/group.
 

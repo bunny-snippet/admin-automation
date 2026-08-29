@@ -20,7 +20,7 @@ from django.urls import path, reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
-from .models import (BootstrapAudit, ClientAccess, ConfigBundle, DesktopRelease, ExtensionPackage, MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyInventoryAlert, OfficeAuditRequest, ProxyReservation, ProfileActivity, OfficeProfileAudit, ProfileDomainActivity, OfficeAuditDomain, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry, ProxyRegionCatalog, SubAdminAccount, SubAdminDomainExclusion, SubAdminScopeExclusion, ClientAccessIP, YSBridgeAgent, YSBridgeCommand)
+from .models import (BootstrapAudit, ClientAccess, ConfigBundle, DesktopRelease, ExtensionPackage, MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyInventoryAlert, OfficeAuditRequest, ProxyReservation, ProxyExitIPCooldown, ProfileActivity, OfficeProfileAudit, ProfileDomainActivity, OfficeAuditDomain, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry, ProxyRegionCatalog, SubAdminAccount, SubAdminDomainExclusion, SubAdminScopeExclusion, ClientAccessIP, YSBridgeAgent, YSBridgeCommand)
 from .release_updates import canonical_release_payload
 from .tasks import queue_refill_proxy_pool
 
@@ -1100,6 +1100,50 @@ class ProxyReservationAdmin(admin.ModelAdmin):
         return False
 
     def has_change_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(ProxyExitIPCooldown)
+class ProxyExitIPCooldownAdmin(admin.ModelAdmin):
+    list_display = (
+        "exit_ip",
+        "provider_code",
+        "client",
+        "claimed_at",
+        "available_after",
+        "duplicate_attempts",
+    )
+    list_filter = ("provider_code", "claimed_at", "available_after")
+    search_fields = (
+        "exit_ip",
+        "provider_code",
+        "client__name",
+        "client__office_name",
+        "client__device_id",
+    )
+    readonly_fields = (
+        "exit_ip",
+        "provider_code",
+        "client",
+        "job",
+        "reservation",
+        "fraud_score",
+        "claimed_at",
+        "available_after",
+        "duplicate_attempts",
+        "last_duplicate_at",
+        "created_at",
+        "updated_at",
+    )
+    list_select_related = ("client", "job", "reservation")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
         return False
 
 
