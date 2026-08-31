@@ -20,7 +20,7 @@ from django.urls import path, reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
-from .models import (BootstrapAudit, ClientAccess, ConfigBundle, DesktopRelease, ExtensionPackage, MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyInventoryAlert, OfficeAuditRequest, ProxyReservation, ProxyExitIPCooldown, ProfileActivity, OfficeProfileAudit, ProfileDomainActivity, OfficeAuditDomain, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry, ProxyRegionCatalog, SubAdminAccount, SubAdminDomainExclusion, SubAdminScopeExclusion, ClientAccessIP, YSBridgeAgent, YSBridgeCommand)
+from .models import (BootstrapAudit, ClientAccess, ConfigBundle, DesktopRelease, ExtensionPackage, MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyInventoryAlert, OfficeAuditRequest, ProxyReservation, ProxyExitIPCooldown, ProfileActivity, OfficeProfileAudit, ProfileDomainActivity, OfficeAuditDomain, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry, ProxyRegionCatalog, ProxyCityCatalog, SubAdminAccount, SubAdminDomainExclusion, SubAdminScopeExclusion, ClientAccessIP, YSBridgeAgent, YSBridgeCommand)
 from .release_updates import canonical_release_payload
 from .tasks import queue_refill_proxy_pool
 
@@ -526,6 +526,15 @@ class ProxyRegionCatalogAdmin(admin.ModelAdmin):
     )
     list_filter = ("provider", "country_code", "source", "active")
     search_fields = ("provider__code", "country_code", "region_code", "region_name")
+
+
+@admin.register(ProxyCityCatalog)
+class ProxyCityCatalogAdmin(admin.ModelAdmin):
+    list_display = (
+        "provider", "account_key", "country_code", "region_code", "city_name", "source", "active"
+    )
+    list_filter = ("provider", "country_code", "source", "active")
+    search_fields = ("provider__code", "account_key", "country_code", "region_code", "city_name")
 
 
 class ExtensionPackageForm(forms.ModelForm):

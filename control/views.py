@@ -31,6 +31,7 @@ from .models import (
     ProfileCreateLease, ProfileCreateQueue, ProxyCityCatalog, ProxyGenerationJob,
     ProxyPoolEntry, ProxyPoolTarget, ProxyReservation, ProxyRegionCatalog,
 )
+from .p3_geo_catalog import P3_GEO_ACCOUNT_KEY, p3_city_name
 from .geo_catalog import p2_geo_account_key_from_config
 from .exit_ip_cooldown import (
     check_exit_ip,
@@ -1140,14 +1141,7 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
             if not city:
                 raise ValueError("Unsupported P2 city")
         if provider_code == "P3" and city:
-            city_by_key = {
-                str(value).casefold(): str(value)
-                for value in _p3_prefill_geography()
-                .get(country_code, {})
-                .get("cities", [])
-                if str(value).strip()
-            }
-            city = city_by_key.get(city.casefold(), "")
+            city = p3_city_name(country_code, city)
             if not city:
                 raise ValueError("Unsupported P3 city")
         if provider_code in {"P2", "P3"} and city:
@@ -1411,7 +1405,7 @@ def proxy_cities(
     country_code: str,
     region_code: str = "",
 ) -> JsonResponse:
-    """Return live-catalog P2 cities without multiplying pools per bundle."""
+    """Return live server-managed P2/P3 cities for the authenticated client."""
     try:
         client = _authenticated_client(request)
         provider = str(provider_code or "").strip().upper()
@@ -1421,15 +1415,18 @@ def proxy_cities(
             region_code,
             "",
         )
-        if provider != "P2" or not country:
+        if provider not in {"P2", "P3"} or not country:
             raise ValueError("Unsupported proxy city request")
-        account_key = p2_geo_account_key_from_config(
-            client.config_bundle.get_payload()
-        )
-        if not account_key:
-            raise ValueError("P2 geo account is unavailable")
+        if provider == "P2":
+            account_key = p2_geo_account_key_from_config(
+                client.config_bundle.get_payload()
+            )
+            if not account_key:
+                raise ValueError("P2 geo account is unavailable")
+        else:
+            account_key = P3_GEO_ACCOUNT_KEY
         if region and not ProxyRegionCatalog.objects.filter(
-            provider__code="P2",
+            provider__code=provider,
             provider__active=True,
             country_code=country,
             region_code=region,
@@ -1437,7 +1434,7 @@ def proxy_cities(
         ).exists():
             raise ValueError("Unsupported provider region")
         city_query = ProxyCityCatalog.objects.filter(
-            provider__code="P2",
+            provider__code=provider,
             provider__active=True,
             account_key=account_key,
             country_code=country,
