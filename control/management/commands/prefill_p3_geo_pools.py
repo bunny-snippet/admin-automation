@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-import json
 import time
 from collections import defaultdict
-from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db.models import Count, Q
 
 from control.models import ClientAccess, ConfigBundle, ProxyPoolTarget
+from control.p3_geo_catalog import p3_country_geography
 from control.prefill import fill_targets_direct
 from control.tasks import provider_is_configured, queue_refill_proxy_pool
 
@@ -27,9 +26,6 @@ DEFAULT_COUNTRIES = (
     "US",
 )
 COUNTRY_ALIASES = {"UK": "GB"}
-GEO_PATH = Path(__file__).resolve().parents[2] / "data" / "p3_prefill_geo.json"
-
-
 def _tokens(values: list[str]) -> list[str]:
     result: list[str] = []
     for value in values:
@@ -66,9 +62,6 @@ class Command(BaseCommand):
         parser.add_argument("--status-only", action="store_true")
 
     def handle(self, *args, **options):
-        if not GEO_PATH.is_file():
-            raise CommandError(f"P3 geography file is missing: {GEO_PATH}")
-        geography = json.loads(GEO_PATH.read_text(encoding="utf-8"))
         offices = list(dict.fromkeys(_tokens(options["office"])))
         countries = list(
             dict.fromkeys(
@@ -76,10 +69,17 @@ class Command(BaseCommand):
                 for value in (_tokens(options["country"]) or DEFAULT_COUNTRIES)
             )
         )
-        unsupported = [country for country in countries if country not in geography]
+        geography = {
+            country: p3_country_geography(country) for country in countries
+        }
+        unsupported = [
+            country
+            for country, details in geography.items()
+            if not details["regions"] and not details["cities"]
+        ]
         if unsupported:
             raise CommandError(
-                "No bundled P3 geography for: " + ", ".join(unsupported)
+                "No server P3 geography for: " + ", ".join(unsupported)
             )
 
         counts = {

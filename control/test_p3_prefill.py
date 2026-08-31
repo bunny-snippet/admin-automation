@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import io
 import json
+import tempfile
 from pathlib import Path
+from unittest import mock
 
 from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase
@@ -12,7 +14,14 @@ from tools.build_p3_prefill_geo import DEFAULT_COUNTRIES as BUILDER_COUNTRIES
 from .management.commands.prefill_p3_geo_pools import (
     DEFAULT_COUNTRIES as COMMAND_COUNTRIES,
 )
-from .models import ClientAccess, ConfigBundle
+from .models import (
+    ClientAccess,
+    ConfigBundle,
+    Provider,
+    ProxyCityCatalog,
+    ProxyRegionCatalog,
+)
+from .p3_geo_catalog import P3_GEO_ACCOUNT_KEY
 
 
 GEO_PATH = Path(__file__).resolve().parent / "data" / "p3_prefill_geo.json"
@@ -92,12 +101,17 @@ class P3PrefillCommandTests(TestCase):
         )
         output = io.StringIO()
 
-        call_command(
-            "prefill_p3_geo_pools",
-            office=["P3 Office"],
-            status_only=True,
-            stdout=output,
-        )
+        geography = json.loads(GEO_PATH.read_text(encoding="utf-8"))
+        with mock.patch(
+            "control.management.commands.prefill_p3_geo_pools.p3_country_geography",
+            side_effect=lambda country: geography[country],
+        ):
+            call_command(
+                "prefill_p3_geo_pools",
+                office=["P3 Office"],
+                status_only=True,
+                stdout=output,
+            )
 
         result = output.getvalue()
         self.assertIn("countries=11", result)
@@ -105,3 +119,51 @@ class P3PrefillCommandTests(TestCase):
         self.assertIn("COUNTRY targets=0/11", result)
         self.assertIn("STATE targets=0/742", result)
         self.assertIn("CITY targets=0/4951", result)
+
+    def test_dynamic_catalog_import_enables_new_country_without_code_change(self):
+        Provider.objects.create(code="P3", display_name="P3", display_order=3)
+        payload = {
+            "subdivisions": {
+                "ID": [
+                    {"value": "JK", "name": "Jakarta"},
+                    {"value": "BA", "name": "Bali"},
+                ]
+            },
+            "cities": {
+                "ID": [
+                    {"value": "Jakarta", "name": "Jakarta"},
+                    {"value": "Denpasar", "name": "Denpasar"},
+                ]
+            },
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "geo.json"
+            source.write_text(json.dumps(payload), encoding="utf-8")
+            output = io.StringIO()
+            call_command(
+                "sync_p3_geo_catalog",
+                source=str(source),
+                country=["ID"],
+                stdout=output,
+            )
+
+        self.assertIn("P3_GEO_SYNC_DONE countries=1", output.getvalue())
+        self.assertEqual(
+            set(
+                ProxyRegionCatalog.objects.filter(
+                    provider__code="P3", country_code="ID", active=True
+                ).values_list("region_code", flat=True)
+            ),
+            {"BA", "JK"},
+        )
+        self.assertEqual(
+            set(
+                ProxyCityCatalog.objects.filter(
+                    provider__code="P3",
+                    account_key=P3_GEO_ACCOUNT_KEY,
+                    country_code="ID",
+                    active=True,
+                ).values_list("city_name", flat=True)
+            ),
+            {"Denpasar", "Jakarta"},
+        )
