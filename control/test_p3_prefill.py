@@ -167,3 +167,34 @@ class P3PrefillCommandTests(TestCase):
             ),
             {"Denpasar", "Jakarta"},
         )
+
+    def test_spanish_catalog_keeps_only_massive_state_level_codes(self):
+        Provider.objects.create(code="P3", display_name="P3", display_order=3)
+        payload = {
+            "subdivisions": {
+                "ES": [
+                    {"value": "M", "name": "Madrid"},
+                    {"value": "MD", "name": "Madrid, Comunidad de"},
+                    {"value": "CT", "name": "Cataluna"},
+                ]
+            },
+            "cities": {"ES": [{"value": "Madrid", "name": "Madrid"}]},
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "geo.json"
+            source.write_text(json.dumps(payload), encoding="utf-8")
+            call_command(
+                "sync_p3_geo_catalog",
+                source=str(source),
+                country=["ES"],
+                stdout=io.StringIO(),
+            )
+
+        self.assertEqual(
+            set(
+                ProxyRegionCatalog.objects.filter(
+                    provider__code="P3", country_code="ES", active=True
+                ).values_list("region_code", flat=True)
+            ),
+            {"CT", "MD"},
+        )
