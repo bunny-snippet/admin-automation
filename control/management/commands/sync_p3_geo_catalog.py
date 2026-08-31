@@ -42,7 +42,7 @@ class Command(BaseCommand):
         countries = list(
             dict.fromkeys(
                 COUNTRY_ALIASES.get(value.upper(), value.upper())
-                for value in (requested or sorted(set(subdivisions) | set(cities)))
+                for value in (requested or sorted(cities))
             )
         )
         missing = [country for country in countries if country not in cities]
