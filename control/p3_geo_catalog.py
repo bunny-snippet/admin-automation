@@ -8,6 +8,19 @@ from .models import Provider, ProxyCityCatalog, ProxyRegionCatalog
 P3_GEO_ACCOUNT_KEY = "p3-global-v1"
 P3_GEO_SOURCE = "dynamic-geo-v1"
 
+# ISO-3166-2 exposes both Spanish autonomous communities and provinces.
+# Massive's subdivision selector accepts the top-level autonomous-community
+# codes; province-only codes such as M (Madrid province) produce unusable
+# proxy sessions. Keep only the provider-supported state-level choices.
+P3_REGION_ALLOWLISTS = {
+    "ES": frozenset(
+        {
+            "AN", "AR", "AS", "CB", "CE", "CL", "CM", "CN", "CT",
+            "EX", "GA", "IB", "MC", "MD", "ML", "NC", "PV", "RI", "VC",
+        }
+    ),
+}
+
 
 def p3_country_geography(country_code: str) -> dict[str, Any]:
     """Return the server-managed P3 subdivisions and country-wide city list."""
@@ -81,10 +94,11 @@ def sync_p3_country_geography(
     provider = Provider.objects.get(code="P3")
 
     wanted_regions: dict[str, str] = {}
+    region_allowlist = P3_REGION_ALLOWLISTS.get(country)
     for item in region_rows:
         code = str(item.get("code") or item.get("value") or "").strip()[:120]
         name = str(item.get("name") or item.get("display") or "").strip()[:160]
-        if code and name:
+        if code and name and (region_allowlist is None or code in region_allowlist):
             wanted_regions[code] = name
     current_regions = {
         row.region_code: row
