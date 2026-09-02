@@ -98,6 +98,16 @@ urlpatterns = [
         name="desktop-release-download",
     ),
     path(
+        "api/v1/desktop-components/",
+        views.desktop_component_manifest,
+        name="desktop-component-manifest",
+    ),
+    path(
+        "api/v1/desktop-components/<int:release_id>/",
+        views.desktop_component_download,
+        name="desktop-component-download",
+    ),
+    path(
         "api/v1/proxies/<str:provider_code>/<str:country_code>/",
         views.proxy_file,
         name="proxy-file",

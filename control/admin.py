@@ -20,8 +20,8 @@ from django.urls import path, reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
-from .models import (BootstrapAudit, ClientAccess, ConfigBundle, DesktopRelease, ExtensionPackage, MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyInventoryAlert, OfficeAuditRequest, ProxyReservation, ProxyExitIPCooldown, ProfileActivity, OfficeProfileAudit, ProfileDomainActivity, OfficeAuditDomain, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry, ProxyRegionCatalog, ProxyCityCatalog, SubAdminAccount, SubAdminDomainExclusion, SubAdminScopeExclusion, ClientAccessIP, YSBridgeAgent, YSBridgeCommand)
-from .release_updates import canonical_release_payload
+from .models import (BootstrapAudit, ClientAccess, ConfigBundle, DesktopComponentRelease, DesktopRelease, DesktopRuntimeConfiguration, ExtensionPackage, MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyInventoryAlert, OfficeAuditRequest, ProxyReservation, ProxyExitIPCooldown, ProfileActivity, OfficeProfileAudit, ProfileDomainActivity, OfficeAuditDomain, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry, ProxyRegionCatalog, ProxyCityCatalog, SubAdminAccount, SubAdminDomainExclusion, SubAdminScopeExclusion, ClientAccessIP, YSBridgeAgent, YSBridgeCommand)
+from .release_updates import canonical_component_payload, canonical_release_payload
 from .tasks import queue_refill_proxy_pool
 
 
@@ -817,6 +817,204 @@ class DesktopReleaseAdmin(admin.ModelAdmin):
                 f"Revoked {revoked} desktop release(s).",
                 level=messages.SUCCESS,
             )
+
+
+class DesktopComponentReleaseForm(forms.ModelForm):
+    class Meta:
+        model = DesktopComponentRelease
+        fields = (
+            "component", "slot", "channel", "version", "build_number", "activation",
+            "target_offices", "target_device_ids", "metadata", "artifact",
+            "signature_b64",
+        )
+        widgets = {
+            "target_offices": forms.Textarea(attrs={"rows": 3, "cols": 80}),
+            "target_device_ids": forms.Textarea(attrs={"rows": 3, "cols": 80}),
+            "metadata": forms.Textarea(attrs={"rows": 8, "cols": 100}),
+            "signature_b64": forms.Textarea(attrs={"rows": 4, "cols": 100}),
+            "artifact": forms.FileInput(),
+        }
+
+    def clean_artifact(self):
+        upload = self.cleaned_data.get("artifact")
+        if not self.instance.pk and not upload:
+            raise forms.ValidationError("Upload a ZIP or JSON component artifact.")
+        if not upload or getattr(upload, "_committed", False):
+            return upload
+        suffix = str(upload.name or "").casefold().rpartition(".")[2]
+        if suffix not in {"zip", "json"}:
+            raise forms.ValidationError("Component artifacts must be ZIP or JSON files.")
+        if int(upload.size) > max(1, int(settings.DESKTOP_COMPONENT_MAX_BYTES)):
+            raise forms.ValidationError("The component artifact exceeds the configured limit.")
+        if suffix == "json":
+            position = upload.tell()
+            try:
+                upload.seek(0)
+                parsed = json.loads(upload.read().decode("utf-8"))
+                if not isinstance(parsed, dict):
+                    raise ValueError("root must be an object")
+            except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
+                raise forms.ValidationError("The JSON component is invalid.") from exc
+            finally:
+                upload.seek(position)
+        else:
+            position = upload.tell()
+            try:
+                upload.seek(0)
+                with zipfile.ZipFile(upload) as archive:
+                    for member in archive.infolist():
+                        safe = PurePosixPath(member.filename.replace("\\", "/"))
+                        if safe.is_absolute() or ".." in safe.parts:
+                            raise forms.ValidationError("ZIP contains an unsafe path.")
+                        if (member.external_attr >> 16) & 0o170000 == 0o120000:
+                            raise forms.ValidationError("ZIP symbolic links are not allowed.")
+            except zipfile.BadZipFile as exc:
+                raise forms.ValidationError("The component ZIP is invalid.") from exc
+            finally:
+                upload.seek(position)
+        return upload
+
+
+@admin.register(DesktopComponentRelease)
+class DesktopComponentReleaseAdmin(admin.ModelAdmin):
+    form = DesktopComponentReleaseForm
+    actions = ("publish_components", "revoke_components")
+    list_display = (
+        "component", "slot", "version", "build_number", "channel", "activation",
+        "status", "scope_summary", "artifact_size", "published_at",
+    )
+    list_filter = ("component", "channel", "activation", "status")
+    search_fields = (
+        "version", "artifact_sha256", "original_filename", "target_offices",
+        "target_device_ids",
+    )
+    readonly_fields = (
+        "status", "original_filename", "artifact_sha256", "artifact_size",
+        "artifact_reference", "canonical_payload", "created_by", "published_at",
+        "created_at", "updated_at",
+    )
+    fieldsets = (
+        ("Component", {"fields": (
+            "component", "slot", "channel", "version", "build_number", "activation",
+            "artifact", "original_filename", "artifact_sha256", "artifact_size",
+        )}),
+        ("Rollout scope", {"fields": (
+            "target_offices", "target_device_ids", "metadata", "status",
+        )}),
+        ("Offline Ed25519 signature", {"fields": (
+            "canonical_payload", "signature_b64",
+        )}),
+        ("Audit", {"fields": (
+            "created_by", "published_at", "created_at", "updated_at",
+        ), "classes": ("collapse",)}),
+    )
+
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+        actions.pop("delete_selected", None)
+        return actions
+
+    def get_readonly_fields(self, request, obj=None):
+        fields = list(super().get_readonly_fields(request, obj))
+        if obj and obj.status != DesktopComponentRelease.STATUS_DRAFT:
+            fields.extend((
+                "component", "slot", "channel", "version", "build_number", "activation",
+                "metadata", "signature_b64",
+            ))
+        if obj and obj.status == DesktopComponentRelease.STATUS_REVOKED:
+            fields.extend(("target_offices", "target_device_ids"))
+        return tuple(dict.fromkeys(fields))
+
+    def get_fieldsets(self, request, obj=None):
+        fieldsets = super().get_fieldsets(request, obj)
+        if not obj or obj.status == DesktopComponentRelease.STATUS_DRAFT:
+            return fieldsets
+        result = []
+        for title, options in fieldsets:
+            copied = dict(options)
+            copied["fields"] = tuple(
+                "artifact_reference" if field == "artifact" else field
+                for field in options.get("fields", ())
+            )
+            result.append((title, copied))
+        return tuple(result)
+
+    def save_model(self, request, obj, form, change):
+        if not obj.pk:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
+
+    def has_delete_permission(self, request, obj=None):
+        if obj is not None and obj.status != DesktopComponentRelease.STATUS_DRAFT:
+            return False
+        return super().has_delete_permission(request, obj)
+
+    @admin.display(description="Scope")
+    def scope_summary(self, obj):
+        offices = len(obj.target_offices or [])
+        devices = len(obj.target_device_ids or [])
+        return "All assigned devices" if not offices and not devices else (
+            f"{offices or 'all'} office(s), {devices or 'all'} device(s)"
+        )
+
+    @admin.display(description="Private component artifact")
+    def artifact_reference(self, obj):
+        return obj.original_filename if obj and obj.artifact else "No artifact"
+
+    @admin.display(description="Canonical signed payload")
+    def canonical_payload(self, obj):
+        if not obj or not obj.pk:
+            return "Save the draft to calculate its SHA-256 and canonical payload."
+        return canonical_component_payload(obj).decode("utf-8")
+
+    @admin.action(description="Publish selected signed component(s)")
+    def publish_components(self, request, queryset):
+        published = 0
+        for selected in queryset:
+            try:
+                with transaction.atomic():
+                    release = DesktopComponentRelease.objects.select_for_update().get(pk=selected.pk)
+                    if release.status != DesktopComponentRelease.STATUS_DRAFT:
+                        raise ValidationError("Only draft components can be published.")
+                    release.status = DesktopComponentRelease.STATUS_PUBLISHED
+                    release.published_at = timezone.now()
+                    release.save(update_fields=("status", "published_at", "updated_at"))
+                published += 1
+            except (OSError, ValidationError) as exc:
+                self.message_user(request, f"Component {selected}: {exc}", level=messages.ERROR)
+        if published:
+            self.message_user(request, f"Published {published} signed component(s).", level=messages.SUCCESS)
+
+    @admin.action(description="Revoke selected published component(s)")
+    def revoke_components(self, request, queryset):
+        revoked = 0
+        for selected in queryset:
+            try:
+                with transaction.atomic():
+                    release = DesktopComponentRelease.objects.select_for_update().get(pk=selected.pk)
+                    if release.status != DesktopComponentRelease.STATUS_PUBLISHED:
+                        raise ValidationError("Only published components can be revoked.")
+                    release.status = DesktopComponentRelease.STATUS_REVOKED
+                    release.save(update_fields=("status", "updated_at"))
+                revoked += 1
+            except ValidationError as exc:
+                self.message_user(request, f"Component {selected}: {exc}", level=messages.ERROR)
+        if revoked:
+            self.message_user(request, f"Revoked {revoked} component(s).", level=messages.SUCCESS)
+
+
+@admin.register(DesktopRuntimeConfiguration)
+class DesktopRuntimeConfigurationAdmin(admin.ModelAdmin):
+    list_display = ("channel", "revision", "active", "updated_at", "updated_by")
+    list_editable = ("active",)
+    readonly_fields = ("updated_by", "created_at", "updated_at")
+    fields = ("channel", "revision", "active", "ui_config", "updated_by", "created_at", "updated_at")
+
+    def save_model(self, request, obj, form, change):
+        obj.updated_by = request.user
+        if change and "ui_config" in form.changed_data and "revision" not in form.changed_data:
+            obj.revision = int(obj.revision) + 1
+        super().save_model(request, obj, form, change)
 
 
 @admin.register(BootstrapAudit)
