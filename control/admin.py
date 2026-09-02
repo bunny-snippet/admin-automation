@@ -20,7 +20,7 @@ from django.urls import path, reverse
 from django.utils import timezone
 from django.utils.html import format_html
 
-from .models import (BootstrapAudit, ClientAccess, ConfigBundle, DesktopComponentRelease, DesktopRelease, DesktopRuntimeConfiguration, ExtensionPackage, MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyInventoryAlert, OfficeAuditRequest, ProxyReservation, ProxyExitIPCooldown, ProfileActivity, OfficeProfileAudit, ProfileDomainActivity, OfficeAuditDomain, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry, ProxyRegionCatalog, ProxyCityCatalog, SubAdminAccount, SubAdminDomainExclusion, SubAdminScopeExclusion, ClientAccessIP, YSBridgeAgent, YSBridgeCommand)
+from .models import (BootstrapAudit, ClientAccess, ConfigBundle, DesktopComponentRelease, DesktopRelease, DesktopRuntimeConfiguration, DesktopSecurityConfiguration, ExtensionPackage, MonitoredDomain, Provider, ProxyCountryFile, ProxyGenerationJob, ProxyInventoryAlert, OfficeAuditRequest, ProxyReservation, ProxyExitIPCooldown, ProfileActivity, OfficeProfileAudit, ProfileDomainActivity, OfficeAuditDomain, BrowserGroupMapping, ProxyPoolTarget, ProxyPoolEntry, ProxyRegionCatalog, ProxyCityCatalog, SubAdminAccount, SubAdminDomainExclusion, SubAdminScopeExclusion, ClientAccessIP, YSBridgeAgent, YSBridgeCommand)
 from .release_updates import canonical_component_payload, canonical_release_payload
 from .tasks import queue_refill_proxy_pool
 
@@ -1014,6 +1014,82 @@ class DesktopRuntimeConfigurationAdmin(admin.ModelAdmin):
         obj.updated_by = request.user
         if change and "ui_config" in form.changed_data and "revision" not in form.changed_data:
             obj.revision = int(obj.revision) + 1
+        super().save_model(request, obj, form, change)
+
+
+class DesktopSecurityConfigurationForm(forms.ModelForm):
+    activation_key = forms.CharField(
+        required=False,
+        min_length=16,
+        max_length=512,
+        widget=forms.PasswordInput(render_value=False),
+        help_text="Leave blank to keep the current key. Entering a value rotates activation immediately.",
+    )
+    b1_bridge_key = forms.CharField(
+        required=False,
+        min_length=24,
+        max_length=512,
+        widget=forms.PasswordInput(render_value=False),
+        help_text="Leave blank to keep the current B1 bridge key. Entering a value rotates B1 immediately.",
+    )
+
+    class Meta:
+        model = DesktopSecurityConfiguration
+        fields = ("activation_required", "b1_enabled")
+
+    def clean(self):
+        cleaned = super().clean()
+        activation_key = str(cleaned.get("activation_key") or "").strip()
+        b1_key = str(cleaned.get("b1_bridge_key") or "").strip()
+        if cleaned.get("activation_required") and not (activation_key or self.instance.activation_key_hash):
+            self.add_error("activation_key", "Enter the first activation key before enabling activation.")
+        if cleaned.get("b1_enabled") and not (b1_key or self.instance.b1_key_ciphertext):
+            self.add_error("b1_bridge_key", "Enter the first B1 bridge key before enabling B1.")
+        return cleaned
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        activation_key = str(self.cleaned_data.get("activation_key") or "").strip()
+        b1_key = str(self.cleaned_data.get("b1_bridge_key") or "").strip()
+        previous = self.initial or {}
+        if activation_key:
+            instance.set_activation_key(activation_key)
+        elif bool(previous.get("activation_required")) != bool(instance.activation_required):
+            instance.activation_revision = max(1, int(instance.activation_revision) + 1)
+        if b1_key:
+            instance.set_b1_key(b1_key)
+        elif bool(previous.get("b1_enabled")) != bool(instance.b1_enabled):
+            instance.b1_revision = max(1, int(instance.b1_revision) + 1)
+        if commit:
+            instance.save()
+        return instance
+
+
+@admin.register(DesktopSecurityConfiguration)
+class DesktopSecurityConfigurationAdmin(admin.ModelAdmin):
+    form = DesktopSecurityConfigurationForm
+    fields = (
+        "activation_required", "activation_key", "activation_revision", "activation_key_hint",
+        "b1_enabled", "b1_bridge_key", "b1_revision", "b1_key_hint",
+        "updated_by", "created_at", "updated_at",
+    )
+    readonly_fields = (
+        "activation_revision", "activation_key_hint", "b1_revision", "b1_key_hint",
+        "updated_by", "created_at", "updated_at",
+    )
+    list_display = (
+        "activation_required", "activation_revision", "activation_key_hint",
+        "b1_enabled", "b1_revision", "b1_key_hint", "updated_at", "updated_by",
+    )
+
+    def has_add_permission(self, request):
+        return not DesktopSecurityConfiguration.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def save_model(self, request, obj, form, change):
+        obj.updated_by = request.user
         super().save_model(request, obj, form, change)
 
 

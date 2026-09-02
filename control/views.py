@@ -27,7 +27,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from .models import (
-    BootstrapAudit, ClientAccess, DesktopComponentRelease, DesktopRelease, DesktopRuntimeConfiguration, ExtensionPackage, ProfileActivity, ProfileDomainActivity, Provider, ProxyCountryFile,
+    BootstrapAudit, ClientAccess, DesktopComponentRelease, DesktopRelease, DesktopRuntimeConfiguration, DesktopSecurityConfiguration, ExtensionPackage, ProfileActivity, ProfileDomainActivity, Provider, ProxyCountryFile,
     ProfileCreateLease, ProfileCreateQueue, ProxyCityCatalog, ProxyGenerationJob,
     ProxyPoolEntry, ProxyPoolTarget, ProxyReservation, ProxyRegionCatalog,
 )
@@ -390,6 +390,8 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
     app_build = 0
     app_channel = ""
     update_protocol = 0
+    activation_key = ""
+    activation_revision = 0
     try:
         if settings.TRUST_APP_REPORTED_IPV4:
             # In approved app-reported mode the transport address is audit-only.
@@ -408,11 +410,15 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
         app_build = int(body.get("app_build") or 0)
         app_channel = str(body.get("app_channel") or "").strip()[:16]
         update_protocol = int(body.get("update_protocol") or 0)
+        activation_key = str(body.get("activation_key") or "").strip()[:512]
+        activation_revision = int(body.get("activation_revision") or 0)
         if (
             app_build < 0
             or app_build > 9_223_372_036_854_775_807
             or update_protocol < 0
             or update_protocol > 1_000
+            or activation_revision < 0
+            or activation_revision > 9_223_372_036_854_775_807
         ):
             raise ValueError("Update metadata must be non-negative")
         if ipaddress.ip_address(reported_ip).version != 4:
@@ -496,6 +502,32 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
             client=client,
         )
 
+    security = DesktopSecurityConfiguration.objects.filter(pk=1).first()
+    if security is not None and security.activation_required:
+        if not security.check_activation_key(activation_key):
+            reason = "activation-expired" if activation_revision else "activation-required"
+            _audit(
+                observed_ip=observed_ip,
+                reported_ip=reported_ip,
+                allowed=False,
+                reason=reason,
+                app_version=app_version,
+                device_id=device_id,
+                client=client,
+            )
+            return _json_response(
+                {
+                    "allowed": False,
+                    "code": "activation_expired",
+                    "message": "Activation Expired. Reactivate again. Contact your Admin.",
+                    "activation": {
+                        "required": True,
+                        "revision": int(security.activation_revision),
+                    },
+                },
+                status=403,
+            )
+
     try:
         config = client.config_bundle.get_payload()
     except ValueError:
@@ -526,6 +558,11 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
         ),
         "device_id": device_id,
         "config_version": client.config_bundle.version,
+        "activation_revision": (
+            int(security.activation_revision)
+            if security is not None and security.activation_required
+            else 0
+        ),
     }
     token = signing.dumps(token_payload, salt=TOKEN_SALT, compress=True)
     ClientAccess.objects.filter(pk=client.pk).update(last_seen_at=timezone.now())
@@ -562,6 +599,30 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
             for item in ExtensionPackage.objects.exclude(package_ciphertext="")
         ]},
     }
+    desktop_security = {
+        "activation": {
+            "required": bool(security and security.activation_required),
+            "valid": True,
+            "revision": int(security.activation_revision) if security else 0,
+        },
+        "browsers": {
+            "B1": {
+                "enabled": False,
+                "revision": int(security.b1_revision) if security else 0,
+            }
+        },
+    }
+    if security is not None and security.b1_enabled:
+        try:
+            b1_key = security.get_b1_key()
+        except ValueError:
+            logger.exception("Could not decrypt the global B1 bridge key")
+            b1_key = ""
+        if b1_key:
+            desktop_security["browsers"]["B1"].update(
+                {"enabled": True, "api_key": b1_key}
+            )
+    response_payload["desktop_security"] = desktop_security
     runtime_config = DesktopRuntimeConfiguration.objects.filter(
         channel=client.release_channel,
         active=True,
@@ -595,6 +656,17 @@ def _bearer_token(request: HttpRequest) -> str:
     return value.strip()
 
 
+def _validate_activation_revision(token_payload: dict[str, Any]) -> None:
+    """Invalidate all existing bearer tokens immediately after activation rotates."""
+    security = DesktopSecurityConfiguration.objects.filter(pk=1).only(
+        "activation_required", "activation_revision"
+    ).first()
+    if security is None or not security.activation_required:
+        return
+    if int(token_payload.get("activation_revision") or 0) != int(security.activation_revision):
+        raise signing.BadSignature("Activation changed")
+
+
 @require_GET
 def proxy_file(request: HttpRequest, provider_code: str, country_code: str) -> JsonResponse:
     try:
@@ -620,6 +692,7 @@ def proxy_file(request: HttpRequest, provider_code: str, country_code: str) -> J
             raise signing.BadSignature("IP changed")
         if token_payload.get("device_id", "") != device_id:
             raise signing.BadSignature("Device changed")
+        _validate_activation_revision(token_payload)
         client = ClientAccess.objects.select_related("config_bundle").filter(
             pk=token_payload.get("client_id"),
             device_id=device_id,
@@ -673,6 +746,7 @@ def _authenticated_client(request: HttpRequest) -> ClientAccess:
                                   max_age=settings.BOOTSTRAP_TOKEN_MAX_AGE)
     if token_payload.get("ip") != access_ip or token_payload.get("device_id", "") != device_id:
         raise signing.BadSignature("Client identity changed")
+    _validate_activation_revision(token_payload)
     client_query = ClientAccess.objects.select_related("config_bundle").filter(
         pk=token_payload.get("client_id"), active=True, config_bundle__active=True,
     )
