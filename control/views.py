@@ -357,6 +357,8 @@ def healthz(_request: HttpRequest) -> JsonResponse:
     return _json_response({"ok": True})
 
 
+@csrf_exempt
+@require_POST
 def optix_proxy_bridge(request: HttpRequest) -> JsonResponse:
     """Private server-to-server entry point; see ``optix_proxy_bridge``."""
     from .optix_proxy_bridge import proxy_bridge
