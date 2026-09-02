@@ -1106,6 +1106,7 @@ class DesktopSecurityConfigurationAdmin(admin.ModelAdmin):
         "activation_required", "activation_revision", "activation_key_hint",
         "b1_enabled", "b1_revision", "b1_key_hint", "updated_at", "updated_by",
     )
+    actions = ("reveal_saved_keys",)
 
     def has_add_permission(self, request):
         return not DesktopSecurityConfiguration.objects.exists()
@@ -1128,6 +1129,27 @@ class DesktopSecurityConfigurationAdmin(admin.ModelAdmin):
                 f"Copy now — new B1 bridge key: {form.generated_b1_bridge_key}",
                 level=messages.WARNING,
             )
+
+    @admin.action(description="Reveal saved OPTIX activation and B1 keys")
+    def reveal_saved_keys(self, request, queryset):
+        security = queryset.filter(pk=1).first()
+        if security is None:
+            self.message_user(request, "Select the global OPTIX desktop security record.", level=messages.ERROR)
+            return
+        try:
+            activation_key = security.get_activation_key()
+            b1_key = security.get_b1_key()
+        except ValueError:
+            self.message_user(request, "Saved key recovery failed. Check CONFIG_ENCRYPTION_SECRET.", level=messages.ERROR)
+            return
+        if not activation_key and not b1_key:
+            self.message_user(request, "No saved keys exist yet.", level=messages.WARNING)
+            return
+        self.message_user(
+            request,
+            f"Saved activation key: {activation_key or 'Not set'} | Saved B1 bridge key: {b1_key or 'Not set'}",
+            level=messages.WARNING,
+        )
 
 
 @admin.register(BootstrapAudit)

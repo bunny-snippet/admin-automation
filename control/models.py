@@ -1061,6 +1061,7 @@ class DesktopSecurityConfiguration(models.Model):
         help_text="When enabled, every OPTIX installation must present the current activation key.",
     )
     activation_key_hash = models.CharField(max_length=256, blank=True, editable=False)
+    activation_key_ciphertext = models.TextField(blank=True, editable=False)
     activation_key_hint = models.CharField(max_length=16, blank=True, editable=False)
     activation_revision = models.PositiveBigIntegerField(default=1, validators=[MinValueValidator(1)])
     b1_enabled = models.BooleanField(
@@ -1096,6 +1097,7 @@ class DesktopSecurityConfiguration(models.Model):
             raise ValidationError("The activation key must be at least 16 characters.")
         had_key = bool(self.activation_key_hash)
         self.activation_key_hash = make_password(value)
+        self.activation_key_ciphertext = encrypt_text(value)
         self.activation_key_hint = f"…{value[-4:]}"
         self.activation_revision = (max(1, int(self.activation_revision or 0) + 1) if had_key else 1)
 
@@ -1103,6 +1105,9 @@ class DesktopSecurityConfiguration(models.Model):
         if not self.activation_key_hash:
             return False
         return check_password(str(value or ""), self.activation_key_hash)
+
+    def get_activation_key(self) -> str:
+        return decrypt_text(self.activation_key_ciphertext) if self.activation_key_ciphertext else ""
 
     def set_b1_key(self, value: str) -> None:
         value = str(value or "").strip()
