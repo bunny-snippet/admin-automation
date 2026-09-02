@@ -503,7 +503,8 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
         )
 
     security = DesktopSecurityConfiguration.objects.filter(pk=1).first()
-    if security is not None and security.activation_required:
+    activation_is_required = _activation_is_required(client, security)
+    if activation_is_required:
         if not security.check_activation_key(activation_key):
             reason = "activation-expired" if activation_revision else "activation-required"
             _audit(
@@ -560,9 +561,10 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
         "config_version": client.config_bundle.version,
         "activation_revision": (
             int(security.activation_revision)
-            if security is not None and security.activation_required
+            if activation_is_required and security is not None
             else 0
         ),
+        "activation_enforced": activation_is_required,
     }
     token = signing.dumps(token_payload, salt=TOKEN_SALT, compress=True)
     ClientAccess.objects.filter(pk=client.pk).update(last_seen_at=timezone.now())
@@ -601,7 +603,7 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
     }
     desktop_security = {
         "activation": {
-            "required": bool(security and security.activation_required),
+            "required": activation_is_required,
             "valid": True,
             "revision": int(security.activation_revision) if security else 0,
         },
@@ -658,6 +660,8 @@ def _bearer_token(request: HttpRequest) -> str:
 
 def _validate_activation_revision(token_payload: dict[str, Any]) -> None:
     """Invalidate all existing bearer tokens immediately after activation rotates."""
+    if not bool(token_payload.get("activation_enforced")):
+        return
     security = DesktopSecurityConfiguration.objects.filter(pk=1).only(
         "activation_required", "activation_revision"
     ).first()
@@ -665,6 +669,21 @@ def _validate_activation_revision(token_payload: dict[str, Any]) -> None:
         return
     if int(token_payload.get("activation_revision") or 0) != int(security.activation_revision):
         raise signing.BadSignature("Activation changed")
+
+
+def _activation_is_required(
+    client: ClientAccess,
+    security: DesktopSecurityConfiguration | None,
+) -> bool:
+    """Apply a per-PC override without creating separate activation keys."""
+    if security is None or not security.activation_key_hash:
+        return False
+    mode = str(client.activation_mode or ClientAccess.ACTIVATION_INHERIT)
+    if mode == ClientAccess.ACTIVATION_BYPASS:
+        return False
+    if mode == ClientAccess.ACTIVATION_REQUIRE:
+        return True
+    return bool(security.activation_required)
 
 
 @require_GET

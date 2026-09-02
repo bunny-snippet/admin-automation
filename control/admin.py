@@ -449,10 +449,12 @@ class ClientAccessAdmin(admin.ModelAdmin):
         "profile_name",
         "config_bundle",
         "release_channel",
+        "activation_mode",
         "active",
         "last_seen_at",
     )
-    list_filter = ("active", "release_channel", "office_name", "config_bundle")
+    list_filter = ("active", "release_channel", "activation_mode", "office_name", "config_bundle")
+    list_editable = ("activation_mode",)
     search_fields = (
         "name",
         "ipv4",

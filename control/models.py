@@ -89,6 +89,14 @@ class ClientAccess(models.Model):
         (RELEASE_CHANNEL_PUBLIC, "Public"),
         (RELEASE_CHANNEL_TESTING, "Testing"),
     )
+    ACTIVATION_INHERIT = "inherit"
+    ACTIVATION_REQUIRE = "require"
+    ACTIVATION_BYPASS = "bypass"
+    ACTIVATION_MODE_CHOICES = (
+        (ACTIVATION_INHERIT, "Inherit global OPTIX activation setting"),
+        (ACTIVATION_REQUIRE, "Require OPTIX activation for this PC"),
+        (ACTIVATION_BYPASS, "Legacy bypass — do not require OPTIX activation"),
+    )
 
     name = models.CharField(max_length=120)
     ipv4 = models.GenericIPAddressField(protocol="IPv4")
@@ -117,6 +125,12 @@ class ClientAccess(models.Model):
         choices=RELEASE_CHANNEL_CHOICES,
         default=RELEASE_CHANNEL_PUBLIC,
         help_text="Desktop release channel assigned by an administrator.",
+    )
+    activation_mode = models.CharField(
+        max_length=16,
+        choices=ACTIVATION_MODE_CHOICES,
+        default=ACTIVATION_INHERIT,
+        help_text="Override the global OPTIX activation requirement for this individual PC.",
     )
     notes = models.TextField(blank=True)
     last_seen_at = models.DateTimeField(blank=True, null=True)
