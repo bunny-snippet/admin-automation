@@ -1441,6 +1441,36 @@ class ControlApiTests(TestCase):
             {"allowed": True, "cities": ["Denpasar", "Jakarta"]},
         )
 
+    def test_p3_country_city_catalog_remains_available_after_region_selection(self):
+        p3 = Provider.objects.create(
+            code="P3", display_name="P3", display_order=3
+        )
+        ProxyRegionCatalog.objects.create(
+            provider=p3,
+            country_code="ID",
+            region_code="JK",
+            region_name="Jakarta",
+        )
+        ProxyCityCatalog.objects.create(
+            provider=p3,
+            account_key="p3-global-v1",
+            country_code="ID",
+            region_code="",
+            city_name="Jakarta",
+            source="dynamic-geo-v1",
+        )
+        token = self.bootstrap().json()["access_token"]
+
+        response = self.client.get(
+            reverse("control:proxy-cities", args=("P3", "ID", "JK")),
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+            HTTP_X_DEVICE_ID="device-one",
+            REMOTE_ADDR="203.0.113.10",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"allowed": True, "cities": ["Jakarta"]})
+
     def test_p2_city_list_and_validation_are_isolated_by_geo_account(self):
         p2 = Provider.objects.create(
             code="P2", display_name="P2", display_order=2

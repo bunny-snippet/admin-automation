@@ -1626,7 +1626,16 @@ def proxy_cities(
             active=True,
         )
         if region:
-            city_query = city_query.filter(region_code=region)
+            regional_cities = city_query.filter(region_code=region)
+            # P3 publishes its selectable city catalog at country scope while
+            # region/state is a separate provider constraint.  Do not empty
+            # the City dropdown merely because those city records have no
+            # duplicate per-region rows.  P2 remains strict because its city
+            # catalog is account- and region-specific.
+            if provider == "P3" and not regional_cities.exists():
+                pass
+            else:
+                city_query = regional_cities
         cities = list(
             city_query.order_by("city_name")
             .values_list("city_name", flat=True)
