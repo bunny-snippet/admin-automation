@@ -10,6 +10,7 @@ import secrets
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from datetime import timedelta, timezone as datetime_timezone
 
@@ -356,6 +357,13 @@ def healthz(_request: HttpRequest) -> JsonResponse:
     return _json_response({"ok": True})
 
 
+def optix_proxy_bridge(request: HttpRequest) -> JsonResponse:
+    """Private server-to-server entry point; see ``optix_proxy_bridge``."""
+    from .optix_proxy_bridge import proxy_bridge
+
+    return proxy_bridge(request)
+
+
 @require_GET
 def openapi_schema(_request: HttpRequest) -> JsonResponse:
     return JsonResponse(OPENAPI_SCHEMA)
@@ -378,6 +386,81 @@ def public_ipv4(request: HttpRequest) -> JsonResponse:
             status=400,
         )
     return _json_response({"ok": True, "ipv4": observed_ip})
+
+
+@csrf_exempt
+@require_POST
+def desktop_route(request: HttpRequest) -> JsonResponse:
+    """Resolve the selected control backend before the OPTIX bootstrap.
+
+    Warrior remains the stable, lightweight entry point.  It authorizes the
+    device against its existing Client Access record, then tells the desktop
+    whether to continue on Warrior or repeat bootstrap against OPTIX.
+    """
+    observed_ip = reported_ip = None
+    app_version = device_id = ""
+    try:
+        observed_ip = (
+            _normalized_ip(request.META.get("REMOTE_ADDR", ""))
+            if settings.TRUST_APP_REPORTED_IPV4
+            else observed_client_ip(request)
+        )
+        body = json.loads(request.body.decode("utf-8"))
+        if not isinstance(body, dict):
+            raise ValueError("Invalid request")
+        reported_ip = _normalized_ip(body.get("reported_ipv4"))
+        device_id = str(body.get("device_id") or "").strip()[:128]
+        app_version = str(body.get("app_version") or "")[:40]
+        if ipaddress.ip_address(reported_ip).version != 4:
+            raise ValueError("IPv4 required")
+        if (
+            not settings.TRUST_APP_REPORTED_IPV4
+            and settings.REQUIRE_REPORTED_IP_MATCH
+            and reported_ip != observed_ip
+        ):
+            raise ValueError("Reported IP does not match the connection")
+        access_ip = reported_ip if settings.TRUST_APP_REPORTED_IPV4 else observed_ip
+        if settings.LOCAL_TESTING_MODE:
+            client = (
+                ClientAccess.objects.select_related("config_bundle")
+                .filter(active=True, config_bundle__active=True)
+                .order_by("pk")
+                .first()
+            )
+        else:
+            client = (
+                ClientAccess.objects.select_related("config_bundle")
+                .filter(device_id=device_id, active=True, config_bundle__active=True)
+                .filter(Q(ipv4=access_ip) | Q(allowed_ips__ipv4=access_ip, allowed_ips__active=True))
+                .distinct()
+                .first()
+            )
+        if client is None:
+            raise ValueError("Not whitelisted")
+    except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
+        return _denied("route-denied", observed_ip=observed_ip, reported_ip=reported_ip, app_version=app_version, device_id=device_id)
+
+    backend = client.optix_backend
+    control_base_url = ""
+    if backend == ClientAccess.BACKEND_OPTIX:
+        control_base_url = str(client.optix_backend_url or "").rstrip("/")
+        parsed = urlsplit(control_base_url)
+        if parsed.scheme != "https" or not parsed.netloc:
+            return _denied("route-unconfigured", observed_ip=observed_ip, reported_ip=reported_ip, app_version=app_version, device_id=device_id, client=client, status=503)
+    _audit(
+        observed_ip=observed_ip,
+        reported_ip=reported_ip,
+        allowed=True,
+        reason=f"route-{backend}",
+        app_version=app_version,
+        device_id=device_id,
+        client=client,
+    )
+    return _json_response({
+        "allowed": True,
+        "backend": backend,
+        "control_base_url": control_base_url,
+    })
 
 
 @csrf_exempt
@@ -763,6 +846,13 @@ def proxy_file(request: HttpRequest, provider_code: str, country_code: str) -> J
 
 
 def _authenticated_client(request: HttpRequest) -> ClientAccess:
+    # Server-to-server OPTIX proxy requests are authenticated separately in
+    # ``optix_proxy_bridge``.  They never carry an end-user bearer token, but
+    # after that verification they may reuse the exact same reservation and
+    # cooldown code as the desktop API.
+    trusted_client = getattr(request, "_optix_trusted_client", None)
+    if isinstance(trusted_client, ClientAccess) and trusted_client.active:
+        return trusted_client
     """Validate the short-lived, IP and device-bound bootstrap token."""
     if settings.TRUST_APP_REPORTED_IPV4:
         access_ip = _normalized_ip(request.META.get("HTTP_X_CLIENT_IPV4", ""))
@@ -777,7 +867,9 @@ def _authenticated_client(request: HttpRequest) -> ClientAccess:
         raise signing.BadSignature("Client identity changed")
     _validate_activation_revision(token_payload)
     client_query = ClientAccess.objects.select_related("config_bundle").filter(
-        pk=token_payload.get("client_id"), active=True, config_bundle__active=True,
+        pk=token_payload.get("client_id"),
+        active=True,
+        config_bundle__active=True,
     )
     if not settings.LOCAL_TESTING_MODE:
         client_query = client_query.filter(device_id=device_id).filter(
@@ -1452,6 +1544,10 @@ def proxy_exit_ip_claim(request: HttpRequest) -> JsonResponse:
 
     try:
         body = json.loads(request.body.decode("utf-8"))
+        if getattr(settings, "OPTIX_PROXY_BRIDGE_ENABLED", True) and getattr(request, "_optix_bridge_request", False):
+            # The bridge has already authenticated the caller and resolved the
+            # Warrior client. Continue through the same validation path below.
+            pass
         if not isinstance(body, dict):
             raise ValueError("Invalid payload")
         action = str(body.get("action") or "claim").strip().lower()

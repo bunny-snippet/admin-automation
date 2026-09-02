@@ -63,6 +63,7 @@ urlpatterns = [
     path("openapi.json", views.openapi_schema, name="openapi-schema"),
     path("healthz/", views.healthz, name="healthz"),
     path("api/v1/ip/", views.public_ipv4, name="public-ipv4"),
+    path("api/v1/desktop-route/", views.desktop_route, name="desktop-route"),
     path("api/v1/ys-bridge/poll/", mobile_ops.bridge_poll, name="ys-bridge-poll"),
     path(
         "api/v1/ys-bridge/commands/<uuid:command_id>/complete/",
@@ -70,6 +71,7 @@ urlpatterns = [
         name="ys-bridge-complete",
     ),
     path("api/v1/bootstrap/", views.bootstrap, name="bootstrap"),
+    path("api/v1/internal/optix-proxy/", views.optix_proxy_bridge, name="optix-proxy-bridge"),
     path("api/v1/proxy-jobs/", views.create_proxy_job, name="proxy-job-create"),
     path("api/v1/proxy-jobs/<int:job_id>/", views.proxy_job_detail, name="proxy-job-detail"),
     path(
