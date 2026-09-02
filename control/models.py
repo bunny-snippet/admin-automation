@@ -8,6 +8,7 @@ import uuid
 from typing import Any
 
 from django.conf import settings
+from django.contrib.auth.hashers import check_password, make_password
 from django.core.exceptions import ValidationError
 from django.core.validators import FileExtensionValidator, MinValueValidator, RegexValidator
 from django.db import models, transaction
@@ -1045,6 +1046,78 @@ class DesktopRuntimeConfiguration(models.Model):
 
     def __str__(self) -> str:
         return f"OPTIX {self.channel} runtime config (r{self.revision})"
+
+
+class DesktopSecurityConfiguration(models.Model):
+    """Global OPTIX activation and B1 bridge controls.
+
+    Raw activation keys are one-way hashed.  The B1 bridge key has to be
+    delivered to an authorized desktop at runtime, so it is encrypted with the
+    same server-side encryption secret used by configuration bundles.
+    """
+
+    activation_required = models.BooleanField(
+        default=False,
+        help_text="When enabled, every OPTIX installation must present the current activation key.",
+    )
+    activation_key_hash = models.CharField(max_length=256, blank=True, editable=False)
+    activation_key_hint = models.CharField(max_length=16, blank=True, editable=False)
+    activation_revision = models.PositiveBigIntegerField(default=1, validators=[MinValueValidator(1)])
+    b1_enabled = models.BooleanField(
+        default=False,
+        help_text="Allow B1 (the local OPTIX Electron bridge) for activated clients.",
+    )
+    b1_key_ciphertext = models.TextField(blank=True, editable=False)
+    b1_key_hint = models.CharField(max_length=16, blank=True, editable=False)
+    b1_revision = models.PositiveBigIntegerField(default=1, validators=[MinValueValidator(1)])
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="desktop_security_configurations",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "OPTIX desktop security"
+        verbose_name_plural = "OPTIX desktop security"
+
+    def save(self, *args, **kwargs):
+        if self.pk not in (None, 1):
+            raise ValidationError("Only one global OPTIX desktop security record is allowed.")
+        self.pk = 1
+        return super().save(*args, **kwargs)
+
+    def set_activation_key(self, value: str) -> None:
+        value = str(value or "").strip()
+        if len(value) < 16:
+            raise ValidationError("The activation key must be at least 16 characters.")
+        had_key = bool(self.activation_key_hash)
+        self.activation_key_hash = make_password(value)
+        self.activation_key_hint = f"…{value[-4:]}"
+        self.activation_revision = (max(1, int(self.activation_revision or 0) + 1) if had_key else 1)
+
+    def check_activation_key(self, value: str) -> bool:
+        if not self.activation_key_hash:
+            return False
+        return check_password(str(value or ""), self.activation_key_hash)
+
+    def set_b1_key(self, value: str) -> None:
+        value = str(value or "").strip()
+        if len(value) < 24:
+            raise ValidationError("The B1 bridge key must be at least 24 characters.")
+        had_key = bool(self.b1_key_ciphertext)
+        self.b1_key_ciphertext = encrypt_text(value)
+        self.b1_key_hint = f"…{value[-4:]}"
+        self.b1_revision = (max(1, int(self.b1_revision or 0) + 1) if had_key else 1)
+
+    def get_b1_key(self) -> str:
+        return decrypt_text(self.b1_key_ciphertext) if self.b1_key_ciphertext else ""
+
+    def __str__(self) -> str:
+        return "Global OPTIX desktop security"
 
 
 class ProxyPoolTarget(models.Model):
