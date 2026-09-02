@@ -27,7 +27,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from .models import (
-    BootstrapAudit, ClientAccess, DesktopRelease, ExtensionPackage, ProfileActivity, ProfileDomainActivity, Provider, ProxyCountryFile,
+    BootstrapAudit, ClientAccess, DesktopComponentRelease, DesktopRelease, DesktopRuntimeConfiguration, ExtensionPackage, ProfileActivity, ProfileDomainActivity, Provider, ProxyCountryFile,
     ProfileCreateLease, ProfileCreateQueue, ProxyCityCatalog, ProxyGenerationJob,
     ProxyPoolEntry, ProxyPoolTarget, ProxyReservation, ProxyRegionCatalog,
 )
@@ -40,9 +40,12 @@ from .exit_ip_cooldown import (
     normalize_exit_ip,
 )
 from .release_updates import (
+    component_update_manifest,
     desktop_update_manifest,
     release_applies_to_client,
+    select_component_updates,
     select_desktop_update,
+    verify_component_signature,
     verify_release_signature,
 )
 
@@ -559,6 +562,14 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
             for item in ExtensionPackage.objects.exclude(package_ciphertext="")
         ]},
     }
+    runtime_config = DesktopRuntimeConfiguration.objects.filter(
+        channel=client.release_channel,
+        active=True,
+    ).first()
+    response_payload["desktop_runtime_config"] = {
+        "revision": int(runtime_config.revision),
+        "values": runtime_config.ui_config,
+    } if runtime_config is not None else {"revision": 0, "values": {}}
     if update_protocol >= 1:
         # ClientAccess remains authoritative, and a mismatched executable gets
         # no manifest instead of a manifest it would reject for another channel.
@@ -568,6 +579,11 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
         response_payload["desktop_update"] = (
             desktop_update_manifest(release) if release is not None else None
         )
+    if update_protocol >= 2:
+        response_payload["desktop_components"] = [
+            component_update_manifest(item)
+            for item in select_component_updates(client=client)
+        ]
     return _json_response(response_payload)
 
 
@@ -983,6 +999,72 @@ def desktop_release_download(request: HttpRequest, release_id: int) -> HttpRespo
         as_attachment=True,
         filename=filename,
         content_type="application/vnd.microsoft.portable-executable",
+    )
+    response["Content-Length"] = str(release.artifact_size)
+    response["X-Content-SHA256"] = release.artifact_sha256
+    response["Cache-Control"] = "private, no-store"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@require_GET
+def desktop_component_manifest(request: HttpRequest) -> JsonResponse:
+    try:
+        client = _authenticated_client(request)
+    except (
+        ValueError,
+        signing.BadSignature,
+        signing.SignatureExpired,
+        ClientAccess.DoesNotExist,
+    ):
+        return _json_response({"allowed": False, "message": "Access denied."}, status=403)
+    return _json_response(
+        {
+            "allowed": True,
+            "schema_version": 1,
+            "components": [
+                component_update_manifest(item)
+                for item in select_component_updates(client=client)
+            ],
+        }
+    )
+
+
+@require_GET
+def desktop_component_download(request: HttpRequest, release_id: int) -> HttpResponse:
+    try:
+        client = _authenticated_client(request)
+        release = DesktopComponentRelease.objects.get(
+            pk=release_id,
+            status=DesktopComponentRelease.STATUS_PUBLISHED,
+            channel=client.release_channel,
+        )
+        if not release_applies_to_client(release, client):
+            raise DesktopComponentRelease.DoesNotExist
+        verify_component_signature(release)
+        if not release.artifact:
+            raise DesktopComponentRelease.DoesNotExist
+        release.artifact.open("rb")
+    except (
+        OSError,
+        ValidationError,
+        ValueError,
+        signing.BadSignature,
+        signing.SignatureExpired,
+        ClientAccess.DoesNotExist,
+        DesktopComponentRelease.DoesNotExist,
+    ):
+        return _json_response({"allowed": False, "message": "Access denied."}, status=403)
+
+    filename = (
+        release.original_filename.replace("\\", "/").rsplit("/", 1)[-1]
+        or f"optix-{release.component}-{release.version}.zip"
+    )
+    response = FileResponse(
+        release.artifact,
+        as_attachment=True,
+        filename=filename,
+        content_type="application/octet-stream",
     )
     response["Content-Length"] = str(release.artifact_size)
     response["X-Content-SHA256"] = release.artifact_sha256

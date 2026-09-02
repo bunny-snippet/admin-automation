@@ -28,20 +28,25 @@ from django.test import (
 from django.urls import reverse
 from django.utils import timezone
 
-from .admin import DesktopReleaseForm, import_catalog_zip
+from .admin import DesktopComponentReleaseForm, DesktopReleaseForm, import_catalog_zip
 from .geo_catalog import (
     ensure_global_country_catalog,
     ensure_p4_region_catalog,
     p2_geo_account_key,
 )
 from .models import (
-    BootstrapAudit, ClientAccess, ClientAccessIP, ConfigBundle, DesktopRelease, ExtensionPackage, ProfileDomainActivity,
+    BootstrapAudit, ClientAccess, ClientAccessIP, ConfigBundle, DesktopComponentRelease, DesktopRelease, ExtensionPackage, ProfileDomainActivity,
     MonitoredDomain, Provider, ProxyCityCatalog, ProxyCountryFile,
     ProxyExitIPCooldown, ProxyGenerationJob, ProxyInventoryAlert, ProxyPoolEntry, ProxyPoolTarget,
     ProxyReservation, ProfileCreateLease, ProfileCreateQueue, ProxyRegionCatalog,
 )
 from .exit_ip_cooldown import claim_exit_ip
-from .release_updates import canonical_release_payload, verify_release_signature
+from .release_updates import (
+    canonical_component_payload,
+    canonical_release_payload,
+    verify_component_signature,
+    verify_release_signature,
+)
 from .management.commands.prefill_p2_geo_pools import _sync_city_catalog
 from .proxy_jobs import reserve_pool_proxies
 from .tasks import (
@@ -3081,3 +3086,169 @@ class DesktopReleaseApiTests(TestCase):
         self.client_access.save(update_fields=("release_channel", "updated_at"))
         wrong_channel = self.client.get(url, **headers)
         self.assertEqual(wrong_channel.status_code, 403)
+
+
+@override_settings(
+    TRUST_PROXY_HEADERS=False,
+    REQUIRE_REPORTED_IP_MATCH=True,
+    TRUST_APP_REPORTED_IPV4=False,
+    BOOTSTRAP_RATE_LIMIT_PER_MINUTE=100,
+    BOOTSTRAP_TOKEN_MAX_AGE=300,
+    DESKTOP_COMPONENT_MAX_BYTES=10 * 1024 * 1024,
+)
+class DesktopComponentReleaseApiTests(TestCase):
+    def setUp(self):
+        self._directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self._directory.cleanup)
+        self._settings = override_settings(
+            DESKTOP_RELEASE_ROOT=self._directory.name + "/private-releases"
+        )
+        self._settings.enable()
+        self.addCleanup(self._settings.disable)
+        self.private_key = Ed25519PrivateKey.generate()
+        public_bytes = self.private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        self._key_patch = mock.patch(
+            "control.release_updates.DESKTOP_RELEASE_PUBLIC_KEY_B64",
+            base64.b64encode(public_bytes).decode("ascii"),
+        )
+        self._key_patch.start()
+        self.addCleanup(self._key_patch.stop)
+        bundle = ConfigBundle(name="Component bundle", version=1)
+        bundle.set_payload({"APP_API_KEY": "component-test"})
+        bundle.save()
+        self.client_access = ClientAccess.objects.create(
+            name="Component device",
+            ipv4="203.0.113.90",
+            device_id="component-device",
+            office_name="Component Office",
+            system_number="9",
+            config_bundle=bundle,
+            release_channel=ClientAccess.RELEASE_CHANNEL_PUBLIC,
+        )
+
+    def bootstrap(self, protocol=2):
+        return self.client.post(
+            reverse("control:bootstrap"),
+            data=json.dumps({
+                "reported_ipv4": "203.0.113.90",
+                "app_version": "1.7.41",
+                "app_build": 10742,
+                "app_channel": "public",
+                "update_protocol": protocol,
+                "device_id": "component-device",
+            }),
+            content_type="application/json",
+            REMOTE_ADDR="203.0.113.90",
+        )
+
+    def headers(self):
+        token = self.bootstrap().json()["access_token"]
+        return {
+            "HTTP_AUTHORIZATION": f"Bearer {token}",
+            "HTTP_X_DEVICE_ID": "component-device",
+            "REMOTE_ADDR": "203.0.113.90",
+        }
+
+    def create_component(
+        self,
+        *,
+        component,
+        slot="default",
+        build_number=1,
+        version="1.0.0",
+        metadata=None,
+        target_offices=None,
+        raw=None,
+    ):
+        raw = raw or json.dumps({"component": component}).encode("utf-8")
+        suffix = "json" if component == DesktopComponentRelease.COMPONENT_CONFIG else "zip"
+        if suffix == "zip" and raw[:2] != b"PK":
+            stream = io.BytesIO()
+            with zipfile.ZipFile(stream, "w") as archive:
+                archive.writestr("index.html", "ready")
+            raw = stream.getvalue()
+        release = DesktopComponentRelease(
+            component=component,
+            slot=slot,
+            channel=DesktopComponentRelease.CHANNEL_PUBLIC,
+            version=version,
+            build_number=build_number,
+            activation=DesktopComponentRelease.ACTIVATION_HOT,
+            target_offices=target_offices or [],
+            metadata=metadata or {},
+            artifact=SimpleUploadedFile(
+                f"{component}-{slot}.{suffix}", raw, content_type="application/octet-stream"
+            ),
+        )
+        release.full_clean()
+        release.save()
+        release.signature_b64 = base64.b64encode(
+            self.private_key.sign(canonical_component_payload(release))
+        ).decode("ascii")
+        release.save(update_fields=("signature_b64", "updated_at"))
+        release.status = DesktopComponentRelease.STATUS_PUBLISHED
+        release.published_at = timezone.now()
+        release.save(update_fields=("status", "published_at", "updated_at"))
+        return release
+
+    def test_bootstrap_and_manifest_keep_multiple_browser_slots(self):
+        config = self.create_component(
+            component="config", build_number=2, version="2.0.0"
+        )
+        browser_140 = self.create_component(
+            component="browser", slot="140", build_number=3, version="140",
+            metadata={"browser_version": "140"},
+        )
+        browser_148 = self.create_component(
+            component="browser", slot="148", build_number=4, version="148",
+            metadata={"browser_version": "148"},
+        )
+        self.create_component(
+            component="engine", build_number=9, version="9.0.0",
+            target_offices=["Another Office"],
+        )
+        payload = self.bootstrap().json()
+        rows = payload["desktop_components"]
+        self.assertEqual(
+            {(row["component"], row["slot"]) for row in rows},
+            {("config", "default"), ("browser", "140"), ("browser", "148")},
+        )
+        by_id = {row["id"]: row for row in rows}
+        self.assertEqual(by_id[config.pk]["activation"], "hot")
+        self.assertEqual(by_id[browser_140.pk]["metadata"]["browser_version"], "140")
+        self.assertEqual(by_id[browser_148.pk]["product"], "quest-automation")
+
+    def test_authenticated_component_download_and_signature(self):
+        raw = json.dumps({"providers": [{"id": "P3", "name": "P3"}]}).encode()
+        release = self.create_component(
+            component="config", build_number=10, version="10.0.0", raw=raw
+        )
+        verify_component_signature(release)
+        manifest = self.client.get(
+            reverse("control:desktop-component-manifest"), **self.headers()
+        )
+        self.assertEqual(manifest.status_code, 200)
+        self.assertEqual(manifest.json()["components"][0]["id"], release.pk)
+        response = self.client.get(
+            reverse("control:desktop-component-download", args=(release.pk,)),
+            **self.headers(),
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b"".join(response.streaming_content), raw)
+        self.assertEqual(response["X-Content-SHA256"], release.artifact_sha256)
+
+    def test_admin_form_rejects_traversal_zip(self):
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("../outside.js", "bad")
+        form = DesktopComponentReleaseForm(data={
+            "component": "ui", "slot": "default", "channel": "public",
+            "version": "1.0.0", "build_number": 1, "activation": "hot",
+            "target_offices": "[]", "target_device_ids": "[]", "metadata": "{}",
+            "signature_b64": "",
+        }, files={"artifact": SimpleUploadedFile("ui.zip", stream.getvalue())})
+        self.assertFalse(form.is_valid())
+        self.assertIn("unsafe path", str(form.errors["artifact"]).lower())

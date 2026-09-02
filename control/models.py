@@ -28,12 +28,25 @@ desktop_version_validator = RegexValidator(
     message="Use a numeric dotted version such as 1.7.35.",
 )
 
+component_version_validator = RegexValidator(
+    regex=r"\A[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z",
+    message="Use 1-64 letters, numbers, dots, underscores, or hyphens.",
+)
+
 logger = logging.getLogger("control")
 
 
 def desktop_release_artifact_path(instance, filename: str) -> str:
     """Store release binaries outside any predictable/public media path."""
     return f"desktop-releases/{uuid.uuid4().hex}.exe"
+
+
+def desktop_component_artifact_path(instance, filename: str) -> str:
+    """Keep signed component packages private while retaining their safe suffix."""
+    suffix = str(filename or "").replace("\\", "/").rsplit("/", 1)[-1]
+    suffix = suffix.rpartition(".")[2].casefold()
+    suffix = suffix if suffix in {"zip", "json"} else "bin"
+    return f"desktop-components/{uuid.uuid4().hex}.{suffix}"
 
 
 class ConfigBundle(models.Model):
@@ -734,6 +747,304 @@ def cleanup_deleted_draft_artifact(sender, instance, **kwargs) -> None:
     transaction.on_commit(
         lambda: _delete_unreferenced_desktop_artifact(storage, name)
     )
+
+
+class DesktopComponentRelease(models.Model):
+    """A signed, independently deployable part of the OPTIX desktop app."""
+
+    COMPONENT_UI = "ui"
+    COMPONENT_ENGINE = "engine"
+    COMPONENT_CONFIG = "config"
+    COMPONENT_BRIDGE = "bridge"
+    COMPONENT_BROWSER = "browser"
+    COMPONENT_EXTENSION = "extension"
+    COMPONENT_CHOICES = (
+        (COMPONENT_UI, "UI bundle"),
+        (COMPONENT_ENGINE, "Action engine"),
+        (COMPONENT_CONFIG, "Application configuration"),
+        (COMPONENT_BRIDGE, "Local Electron bridge"),
+        (COMPONENT_BROWSER, "Browser package"),
+        (COMPONENT_EXTENSION, "Browser extension"),
+    )
+
+    ACTIVATION_HOT = "hot"
+    ACTIVATION_BRIDGE_RESTART = "bridge-restart"
+    ACTIVATION_APP_RESTART = "app-restart"
+    ACTIVATION_CHOICES = (
+        (ACTIVATION_HOT, "Apply on Reload"),
+        (ACTIVATION_BRIDGE_RESTART, "Apply after safe bridge restart"),
+        (ACTIVATION_APP_RESTART, "Apply after OPTIX restart"),
+    )
+
+    CHANNEL_CHOICES = DesktopRelease.CHANNEL_CHOICES
+    CHANNEL_PUBLIC = DesktopRelease.CHANNEL_PUBLIC
+    CHANNEL_TESTING = DesktopRelease.CHANNEL_TESTING
+    STATUS_CHOICES = DesktopRelease.STATUS_CHOICES
+    STATUS_DRAFT = DesktopRelease.STATUS_DRAFT
+    STATUS_PUBLISHED = DesktopRelease.STATUS_PUBLISHED
+    STATUS_REVOKED = DesktopRelease.STATUS_REVOKED
+
+    component = models.CharField(max_length=24, choices=COMPONENT_CHOICES)
+    slot = models.CharField(
+        max_length=64,
+        default="default",
+        validators=[component_version_validator],
+        help_text=(
+            "Use default for UI/engine/config/bridge; use the browser version or "
+            "extension name for independently retained packages."
+        ),
+    )
+    channel = models.CharField(
+        max_length=16,
+        choices=CHANNEL_CHOICES,
+        default=CHANNEL_PUBLIC,
+    )
+    version = models.CharField(max_length=64, validators=[component_version_validator])
+    build_number = models.PositiveBigIntegerField(
+        validators=[MinValueValidator(1)],
+        help_text="Monotonically increasing within this component and channel.",
+    )
+    activation = models.CharField(
+        max_length=24,
+        choices=ACTIVATION_CHOICES,
+        default=ACTIVATION_HOT,
+    )
+    status = models.CharField(
+        max_length=16,
+        choices=STATUS_CHOICES,
+        default=STATUS_DRAFT,
+        editable=False,
+    )
+    target_offices = models.JSONField(default=list, blank=True)
+    target_device_ids = models.JSONField(default=list, blank=True)
+    metadata = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text=(
+            "Non-secret activation data. UI/engine/bridge ZIPs use entry; browser "
+            "ZIPs use browser_version."
+        ),
+    )
+    artifact = models.FileField(
+        storage=private_desktop_release_storage,
+        upload_to=desktop_component_artifact_path,
+        validators=[FileExtensionValidator(allowed_extensions=("zip", "json"))],
+    )
+    original_filename = models.CharField(max_length=255, blank=True, editable=False)
+    artifact_sha256 = models.CharField(max_length=64, blank=True, editable=False)
+    artifact_size = models.PositiveBigIntegerField(default=0, editable=False)
+    signature_b64 = models.TextField(
+        blank=True,
+        default="",
+        help_text="Detached Ed25519 signature of the canonical component manifest.",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="desktop_component_releases",
+    )
+    published_at = models.DateTimeField(blank=True, null=True, editable=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("component", "-build_number", "-pk")
+        constraints = [
+            models.UniqueConstraint(
+                fields=("component", "slot", "channel", "build_number"),
+                name="unique_component_release_build",
+            )
+        ]
+        indexes = [
+            models.Index(
+                fields=("channel", "status", "component", "slot", "-build_number"),
+                name="component_release_lookup_idx",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.component}/{self.slot} {self.version} (build {self.build_number}, {self.channel})"
+
+    def clean(self) -> None:
+        super().clean()
+        self.target_offices = DesktopRelease._clean_target_list(
+            self.target_offices, "target_offices"
+        )
+        self.target_device_ids = DesktopRelease._clean_target_list(
+            self.target_device_ids, "target_device_ids"
+        )
+        if not isinstance(self.metadata, dict):
+            raise ValidationError({"metadata": "Enter a JSON object."})
+        if not self.pk and self.status != self.STATUS_DRAFT:
+            raise ValidationError({"status": "A new component must start as a draft."})
+
+    def save(self, *args, **kwargs):
+        from .release_updates import (
+            artifact_sha256_and_size,
+            verify_component_artifact_integrity,
+            verify_component_signature,
+        )
+
+        existing = type(self).objects.filter(pk=self.pk).first() if self.pk else None
+        if self.component not in dict(self.COMPONENT_CHOICES):
+            raise ValidationError({"component": "Unsupported component type."})
+        component_version_validator(self.slot)
+        if self.channel not in dict(self.CHANNEL_CHOICES):
+            raise ValidationError({"channel": "Unsupported release channel."})
+        if self.activation not in dict(self.ACTIVATION_CHOICES):
+            raise ValidationError({"activation": "Unsupported activation mode."})
+        component_version_validator(self.version)
+        if int(self.build_number) < 1:
+            raise ValidationError({"build_number": "Build number must be at least 1."})
+        self.target_offices = DesktopRelease._clean_target_list(
+            self.target_offices, "target_offices"
+        )
+        self.target_device_ids = DesktopRelease._clean_target_list(
+            self.target_device_ids, "target_device_ids"
+        )
+        if not isinstance(self.metadata, dict):
+            raise ValidationError({"metadata": "Enter a JSON object."})
+        self.signature_b64 = str(self.signature_b64 or "").strip()
+
+        artifact_changed = bool(
+            self.artifact
+            and (
+                existing is None
+                or not getattr(self.artifact, "_committed", True)
+                or self.artifact.name != existing.artifact.name
+            )
+        )
+        replaced_artifact_name = ""
+        if artifact_changed:
+            if existing is not None and existing.status == self.STATUS_DRAFT:
+                replaced_artifact_name = str(existing.artifact.name or "")
+            self.original_filename = str(self.artifact.name).replace("\\", "/").rsplit("/", 1)[-1]
+            self.artifact_sha256, self.artifact_size = artifact_sha256_and_size(self.artifact)
+            if self.artifact_size > max(1, int(settings.DESKTOP_COMPONENT_MAX_BYTES)):
+                raise ValidationError({"artifact": "The component package is too large."})
+        elif existing is not None:
+            self.original_filename = existing.original_filename
+            self.artifact_sha256 = existing.artifact_sha256
+            self.artifact_size = existing.artifact_size
+
+        immutable_fields = (
+            "component", "slot", "channel", "version", "build_number", "activation",
+            "metadata", "artifact", "original_filename", "artifact_sha256",
+            "artifact_size", "signature_b64",
+        )
+        if existing is not None and existing.status in {self.STATUS_PUBLISHED, self.STATUS_REVOKED}:
+            if any(getattr(self, field) != getattr(existing, field) for field in immutable_fields):
+                raise ValidationError(
+                    "Published component identity and artifact fields are immutable."
+                )
+            allowed = (
+                {self.STATUS_PUBLISHED, self.STATUS_REVOKED}
+                if existing.status == self.STATUS_PUBLISHED
+                else {self.STATUS_REVOKED}
+            )
+            if self.status not in allowed:
+                raise ValidationError({"status": "This status transition is not allowed."})
+
+        publishing = self.status == self.STATUS_PUBLISHED and (
+            existing is None or existing.status != self.STATUS_PUBLISHED
+        )
+        if publishing:
+            if existing is None:
+                raise ValidationError({"status": "Save the component as a draft first."})
+            if type(self).objects.filter(
+                component=self.component,
+                slot=self.slot,
+                channel=self.channel,
+                build_number__gt=self.build_number,
+            ).exclude(status=self.STATUS_DRAFT).exists():
+                raise ValidationError({"build_number": "A higher build is already published."})
+            verify_component_artifact_integrity(self)
+            verify_component_signature(self)
+
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None and artifact_changed:
+            kwargs["update_fields"] = tuple(set(update_fields) | {
+                "artifact", "original_filename", "artifact_sha256", "artifact_size"
+            })
+        result = super().save(*args, **kwargs)
+        if replaced_artifact_name and replaced_artifact_name != self.artifact.name:
+            storage = existing.artifact.storage
+            transaction.on_commit(
+                lambda: _delete_unreferenced_component_artifact(storage, replaced_artifact_name)
+            )
+        return result
+
+
+def _delete_unreferenced_component_artifact(storage, name: str) -> None:
+    if not name or DesktopComponentRelease.objects.filter(artifact=name).exists():
+        return
+    try:
+        storage.delete(name)
+    except (OSError, ValueError):
+        logger.exception("Could not remove unused component artifact %s", name)
+
+
+@receiver(post_delete, sender=DesktopComponentRelease)
+def cleanup_deleted_component_artifact(sender, instance, **kwargs) -> None:
+    if instance.status != DesktopComponentRelease.STATUS_DRAFT or not instance.artifact:
+        return
+    storage = instance.artifact.storage
+    name = str(instance.artifact.name or "")
+    transaction.on_commit(lambda: _delete_unreferenced_component_artifact(storage, name))
+
+
+class DesktopRuntimeConfiguration(models.Model):
+    """Small hot-reloadable UI/capability registry; never stores secrets."""
+
+    channel = models.CharField(
+        max_length=16,
+        choices=DesktopRelease.CHANNEL_CHOICES,
+        unique=True,
+    )
+    revision = models.PositiveBigIntegerField(default=1, validators=[MinValueValidator(1)])
+    active = models.BooleanField(default=True)
+    ui_config = models.JSONField(
+        default=dict,
+        help_text=(
+            "Non-secret OPTIX UI data such as browsers, devices, labels, feature "
+            "visibility and default selections. Changes apply through Reload."
+        ),
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="desktop_runtime_configurations",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("channel",)
+
+    def clean(self) -> None:
+        super().clean()
+        if not isinstance(self.ui_config, dict):
+            raise ValidationError({"ui_config": "Enter a JSON object."})
+        serialized = str(self.ui_config)
+        forbidden = ("api_key", "token", "password", "secret", "credential")
+        if any(word in serialized.casefold() for word in forbidden):
+            raise ValidationError(
+                {"ui_config": "Runtime UI configuration cannot contain credentials or secrets."}
+            )
+
+    def save(self, *args, **kwargs):
+        if not isinstance(self.ui_config, dict):
+            raise ValidationError({"ui_config": "Enter a JSON object."})
+        if int(self.revision) < 1:
+            raise ValidationError({"revision": "Revision must be at least 1."})
+        return super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return f"OPTIX {self.channel} runtime config (r{self.revision})"
 
 
 class ProxyPoolTarget(models.Model):

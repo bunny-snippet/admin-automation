@@ -21,6 +21,7 @@ DESKTOP_RELEASE_PUBLIC_KEY_B64 = (
 )
 DESKTOP_RELEASE_PRODUCT = "quest-automation"
 DESKTOP_RELEASE_SCHEMA_VERSION = 1
+DESKTOP_COMPONENT_SCHEMA_VERSION = 1
 
 
 def artifact_sha256_and_size(file_value: Any) -> tuple[str, int]:
@@ -70,6 +71,29 @@ def canonical_release_payload(release: Any) -> bytes:
     ).encode("utf-8")
 
 
+def canonical_component_payload(release: Any) -> bytes:
+    """Return the stable payload shared by Django and the OPTIX component loader."""
+    payload = {
+        "activation": str(release.activation),
+        "build_number": int(release.build_number),
+        "channel": str(release.channel),
+        "component": str(release.component),
+        "metadata": release.metadata or {},
+        "product": DESKTOP_RELEASE_PRODUCT,
+        "schema_version": DESKTOP_COMPONENT_SCHEMA_VERSION,
+        "sha256": str(release.artifact_sha256),
+        "size": int(release.artifact_size),
+        "slot": str(release.slot),
+        "version": str(release.version),
+    }
+    return json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+
+
 def verify_release_signature(release: Any) -> None:
     """Raise ValidationError unless the detached Ed25519 signature is valid."""
     signature_text = str(release.signature_b64 or "").strip()
@@ -93,6 +117,26 @@ def verify_release_signature(release: Any) -> None:
         ) from exc
 
 
+def verify_component_signature(release: Any) -> None:
+    """Raise ValidationError unless a component has a valid detached signature."""
+    signature_text = str(release.signature_b64 or "").strip()
+    if not signature_text:
+        raise ValidationError({"signature_b64": "A component signature is required."})
+    try:
+        public_key_raw = base64.b64decode(DESKTOP_RELEASE_PUBLIC_KEY_B64, validate=True)
+        signature = base64.b64decode(signature_text, validate=True)
+        if len(public_key_raw) != 32 or len(signature) != 64:
+            raise ValueError("Invalid Ed25519 material length")
+        Ed25519PublicKey.from_public_bytes(public_key_raw).verify(
+            signature,
+            canonical_component_payload(release),
+        )
+    except (binascii.Error, InvalidSignature, TypeError, ValueError) as exc:
+        raise ValidationError(
+            {"signature_b64": "The Ed25519 component signature is invalid."}
+        ) from exc
+
+
 def verify_artifact_integrity(release: Any) -> None:
     """Re-hash the stored artifact before an administrator publishes it."""
     if not release.artifact:
@@ -113,6 +157,26 @@ def verify_artifact_integrity(release: Any) -> None:
         )
 
 
+def verify_component_artifact_integrity(release: Any) -> None:
+    """Re-hash a stored component package immediately before publication."""
+    if not release.artifact:
+        raise ValidationError({"artifact": "A component artifact is required."})
+    try:
+        release.artifact.open("rb")
+        digest, size = artifact_sha256_and_size(release.artifact)
+    except OSError as exc:
+        raise ValidationError({"artifact": "The component artifact is unavailable."}) from exc
+    finally:
+        try:
+            release.artifact.close()
+        except (AttributeError, OSError):
+            pass
+    if digest != release.artifact_sha256 or size != release.artifact_size:
+        raise ValidationError(
+            {"artifact": "The stored component artifact failed its integrity check."}
+        )
+
+
 def release_applies_to_client(release: Any, client: Any) -> bool:
     offices = {
         str(value).strip().casefold()
@@ -129,6 +193,43 @@ def release_applies_to_client(release: Any, client: Any) -> bool:
     if device_ids and str(client.device_id or "").strip() not in device_ids:
         return False
     return True
+
+
+def select_component_updates(*, client: Any) -> list[Any]:
+    """Return the newest valid applicable release for every component name."""
+    from .models import DesktopComponentRelease
+
+    selected: dict[tuple[str, str], Any] = {}
+    candidates = DesktopComponentRelease.objects.filter(
+        channel=client.release_channel,
+        status=DesktopComponentRelease.STATUS_PUBLISHED,
+    ).exclude(artifact="").order_by("component", "slot", "-build_number", "-pk")
+    for release in candidates:
+        key = (release.component, release.slot)
+        if key in selected or not release_applies_to_client(release, client):
+            continue
+        try:
+            if not release.artifact.storage.exists(release.artifact.name):
+                continue
+            verify_component_signature(release)
+        except (OSError, ValidationError):
+            logger.exception("Ignoring invalid component release %s", release.pk)
+            continue
+        selected[key] = release
+    return [selected[key] for key in sorted(selected)]
+
+
+def component_update_manifest(release: Any) -> dict[str, Any]:
+    payload = json.loads(canonical_component_payload(release).decode("utf-8"))
+    payload.update(
+        {
+            "id": int(release.pk),
+            "download_path": f"/api/v1/desktop-components/{int(release.pk)}/",
+            "filename": str(release.original_filename),
+            "signature": str(release.signature_b64).strip(),
+        }
+    )
+    return payload
 
 
 def select_desktop_update(*, client: Any, app_build: int) -> Any | None:
