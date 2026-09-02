@@ -506,7 +506,8 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
     activation_is_required = _activation_is_required(client, security)
     if activation_is_required:
         if not security.check_activation_key(activation_key):
-            reason = "activation-expired" if activation_revision else "activation-required"
+            first_activation = not activation_key
+            reason = "activation-required" if first_activation else "activation-expired"
             _audit(
                 observed_ip=observed_ip,
                 reported_ip=reported_ip,
@@ -520,7 +521,11 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
                 {
                     "allowed": False,
                     "code": "activation_expired",
-                    "message": "Activation Expired. Reactivate again. Contact your Admin.",
+                    "message": (
+                        "Enter the activation key provided by your OPTIX administrator to activate this installation."
+                        if first_activation
+                        else "Activation Expired. Reactivate again. Contact your Admin."
+                    ),
                     "activation": {
                         "required": True,
                         "revision": int(security.activation_revision),
