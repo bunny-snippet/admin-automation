@@ -680,7 +680,12 @@ def _activation_is_required(
     client: ClientAccess,
     security: DesktopSecurityConfiguration | None,
 ) -> bool:
-    """Apply a per-PC override without creating separate activation keys."""
+    """Apply OPTIX activation only to public-channel client access records."""
+    # Testing is deliberately never activation-gated.  This keeps the legacy
+    # testing app and test rollout channel usable while Public installations
+    # can be enforced independently.
+    if client.release_channel == ClientAccess.RELEASE_CHANNEL_TESTING:
+        return False
     if security is None or not security.activation_key_hash:
         return False
     mode = str(client.activation_mode or ClientAccess.ACTIVATION_INHERIT)
