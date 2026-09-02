@@ -97,6 +97,12 @@ class ClientAccess(models.Model):
         (ACTIVATION_REQUIRE, "Require OPTIX activation for this PC"),
         (ACTIVATION_BYPASS, "Legacy bypass — do not require OPTIX activation"),
     )
+    BACKEND_WARRIOR = "warrior"
+    BACKEND_OPTIX = "optix"
+    BACKEND_CHOICES = (
+        (BACKEND_WARRIOR, "Warrior backend"),
+        (BACKEND_OPTIX, "OPTIX backend"),
+    )
 
     name = models.CharField(max_length=120)
     ipv4 = models.GenericIPAddressField(protocol="IPv4")
@@ -125,6 +131,17 @@ class ClientAccess(models.Model):
         choices=RELEASE_CHANNEL_CHOICES,
         default=RELEASE_CHANNEL_PUBLIC,
         help_text="Desktop release channel assigned by an administrator.",
+    )
+    optix_backend = models.CharField(
+        max_length=16,
+        choices=BACKEND_CHOICES,
+        default=BACKEND_WARRIOR,
+        help_text="Backend used by the OPTIX desktop app for this PC.",
+    )
+    optix_backend_url = models.URLField(
+        blank=True,
+        default="",
+        help_text="Required only when OPTIX backend is selected; must be its HTTPS base URL.",
     )
     activation_mode = models.CharField(
         max_length=16,

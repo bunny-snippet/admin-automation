@@ -217,6 +217,11 @@ PROFILE_CREATE_SERIALIZATION_ENABLED = env_bool(
     "PROFILE_CREATE_SERIALIZATION_ENABLED", False
 )
 
+# Private server-to-server bridge used only by the separate OPTIX control
+# plane. Leave blank/disabled until OPTIX has its own deployed server.
+OPTIX_PROXY_BRIDGE_SECRET = os.getenv("OPTIX_PROXY_BRIDGE_SECRET", "").strip()
+OPTIX_PROXY_BRIDGE_ENABLED = env_bool("OPTIX_PROXY_BRIDGE_ENABLED", True)
+
 PROXY_ALERT_ENABLED = env_bool(
     "PROXY_ALERT_ENABLED", env_bool("PROXY_ALERT_SMS_ENABLED", False)
 )
