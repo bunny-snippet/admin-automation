@@ -101,6 +101,13 @@ def proxy_bridge(request: HttpRequest) -> JsonResponse:
             country = str(payload.get("country") or "")
             region = str(payload.get("region") or "")
             response = views.proxy_cities(_inner("GET", "/api/v1/proxy-cities/", {}, client), provider, country, region)
+        elif action == "catalog":
+            # Dollar uses its own activation/releases but consumes the same
+            # provider geography as the Warrior-backed desktop. This private,
+            # signed response keeps both applications in exact catalog parity.
+            response = JsonResponse(
+                {"allowed": True, "providers": views._catalog(flatten_p3_locations=False)}
+            )
         else:
             return _denied(400)
         return JsonResponse(json.loads(response.content.decode("utf-8")), status=response.status_code)
