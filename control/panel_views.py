@@ -25,6 +25,9 @@ from .models import (
     ClientAccess,
     ClientAccessIP,
     ConfigBundle,
+    DesktopComponentRelease,
+    DesktopOfficeAccessPolicy,
+    DesktopRelease,
     ExtensionPackage,
     ProfileActivity,
     ProfileDomainActivity,
@@ -32,6 +35,7 @@ from .models import (
     Provider,
     ProxyGenerationJob,
     ProxyPoolEntry,
+    ProxyPoolTarget,
     SubAdminAccount,
     SubAdminDomainExclusion,
     SubAdminScopeExclusion,
@@ -663,6 +667,7 @@ def panel_overview_api(request: HttpRequest) -> JsonResponse:
         {
             "generated_at": iso(now),
             "cards": {
+                "offices": ClientAccess.objects.exclude(office_name="").values("office_name").distinct().count(),
                 "devices": ClientAccess.objects.count(),
                 "active_devices": ClientAccess.objects.filter(active=True).count(),
                 "online_24h": ClientAccess.objects.filter(
@@ -676,6 +681,17 @@ def panel_overview_api(request: HttpRequest) -> JsonResponse:
                 "suspicious_activity_24h": ProfileDomainActivity.objects.filter(
                     domain__in=monitored_domains, last_visited_at__gte=since
                 ).count(),
+                "proxy_targets": ProxyPoolTarget.objects.filter(active=True).count(),
+                "queued_jobs": ProxyGenerationJob.objects.filter(
+                    status__in=("queued", "pending", "generating")
+                ).count(),
+                "published_releases": DesktopRelease.objects.filter(
+                    status=DesktopRelease.STATUS_PUBLISHED
+                ).count(),
+                "published_components": DesktopComponentRelease.objects.filter(
+                    status=DesktopComponentRelease.STATUS_PUBLISHED
+                ).count(),
+                "office_policies": DesktopOfficeAccessPolicy.objects.filter(active=True).count(),
             },
             "job_status": job_status,
             "pool_status": pool_status,
@@ -689,10 +705,10 @@ def panel_overview_api(request: HttpRequest) -> JsonResponse:
             "monitored_domains": monitored_domains,
             "offices": offices,
             "management": [
-                {"key": "devices", "label": "Devices", "count": ClientAccess.objects.count(), "description": "Whitelisted systems and assignments"},
-                {"key": "configurations", "label": "Config bundles", "count": ConfigBundle.objects.count(), "description": "Runtime configuration and groups"},
-                {"key": "providers", "label": "Providers", "count": Provider.objects.count(), "description": "Providers and country catalogs"},
-                {"key": "extensions", "label": "Extensions", "count": ExtensionPackage.objects.count(), "description": "Managed browser packages"},
+                {"key": "devices", "label": "IP whitelist", "count": ClientAccess.objects.count(), "description": "Authorized PCs and office IP access"},
+                {"key": "proxy-pools", "label": "Proxy pools", "count": ProxyPoolTarget.objects.count(), "description": "Generate and manage bundle inventory"},
+                {"key": "office-access", "label": "Office access", "count": DesktopOfficeAccessPolicy.objects.count(), "description": "Office-level OPTIX permissions"},
+                {"key": "desktop-components", "label": "Live updates", "count": DesktopComponentRelease.objects.count(), "description": "Signed OPTIX UI and logic rollouts"},
             ],
         }
     )

@@ -21,22 +21,28 @@
     resource: app.dataset.resourceUrl,
   };
   const labels = {
-    overview: ["Overview", "Operations overview"],
+    overview: ["Overview", "Operations"],
     domains: ["Domain activity", "Domain activity intelligence"],
     suspicious: ["Suspicious activity", "Monitored-domain alerts"],
-    devices: ["Devices", "Devices and access"],
+    devices: ["Device whitelist", "IP whitelist"],
     subadmins: ["Sub-admin access", "Office, group and domain visibility"],
-    configurations: ["Config bundles", "Configuration bundles"],
+    configurations: ["Office bundles", "Configuration bundles"],
     groups: ["Browser groups", "Browser group mapping"],
     providers: ["Providers", "Proxy providers"],
     "proxy-catalog": ["Proxy catalog", "Country proxy catalog"],
     extensions: ["Extensions", "Managed extensions"],
-    "proxy-pools": ["Proxy pools", "Proxy pool health"],
+    "proxy-pools": ["Generate & manage", "Proxy operations"],
     "proxy-inventory": ["Proxy inventory", "Proxy inventory"],
     "proxy-jobs": ["Generation jobs", "Proxy generation jobs"],
     reservations: ["Reservations", "Proxy reservations"],
     "profile-activity": ["Profile activity", "Profile lifecycle activity"],
     "access-audit": ["Access audit", "Bootstrap access audit"],
+    "office-access": ["Office permissions", "OPTIX office access"],
+    "device-permissions": ["Per-PC permissions", "OPTIX device access"],
+    "desktop-releases": ["Installer releases", "OPTIX releases"],
+    "desktop-components": ["Live updates", "OPTIX live updates"],
+    "desktop-runtime": ["Runtime settings", "OPTIX runtime settings"],
+    "desktop-security": ["Activation & B1", "OPTIX security"],
   };
   const state = {
     route: "overview",
@@ -197,67 +203,35 @@
 
   async function loadOverview() {
     const data = await api(endpoints.overview);
-    const jobs = Object.entries(data.job_status || {});
-    const pools = Object.entries(data.pool_status || {});
     content.innerHTML = `
       <div class="page-intro">
         <div>
-          <span class="eyebrow">Live control plane</span>
-          <h2>Everything important, at a glance</h2>
-          <p>Device authorization, profile execution, domain evidence and proxy capacity from the last 24 hours.</p>
+          <span class="eyebrow">Warrior operations</span>
+          <h2>Daily controls, without the clutter</h2>
+          <p>Manage office access, proxy inventory and OPTIX rollouts from one focused workspace.</p>
         </div>
         <span class="cell-muted">Updated ${formatDate(data.generated_at)}</span>
       </div>
       <div class="metric-grid">
-        ${metricCard("Active devices", data.cards.active_devices, `${number(data.cards.online_24h)} seen in 24 hours`)}
-        ${metricCard("Profiles opened", data.cards.profiles_opened_24h, "Completed in the last 24 hours")}
-        ${metricCard("Domain visits", data.cards.domain_visits_24h, `${number(data.cards.unique_domains_24h)} unique domains`)}
-        ${metricCard("Available proxies", data.cards.available_proxies, "Ready in managed pools")}
-        ${metricCard("Suspicious activity", data.cards.suspicious_activity_24h, "Monitored-domain matches")}
+        ${metricCard("Offices", data.cards.offices, `${number(data.cards.active_devices)} active PCs`)}
+        ${metricCard("Available proxies", data.cards.available_proxies, `${number(data.cards.proxy_targets)} active pool targets`)}
+        ${metricCard("Queued jobs", data.cards.queued_jobs, "Waiting or generating now")}
+        ${metricCard("Access denied", data.bootstrap_status.denied, "Bootstrap requests in 24 hours")}
       </div>
-      <div class="dashboard-grid">
-        <div class="dashboard-stack">
-          <article class="panel-card">
-            <div class="panel-header">
-              <div><h3>Recent domain activity</h3><p>Latest profile browsing evidence</p></div>
-              <button class="link-button" data-go="domains">View all</button>
-            </div>
-            <div class="panel-body-flush">${domainTable(data.recent_domains, true)}</div>
-          </article>
-          <article class="panel-card">
-            <div class="panel-header"><div><h3>Management</h3><p>Core configuration areas</p></div></div>
-            <div class="panel-body management-grid">
-              ${data.management.map((item) => `
-                <button class="management-card" data-go="${e(item.key)}">
-                  <div><strong>${e(item.label)}</strong><span>${e(item.description)}</span></div>
-                  <strong>${number(item.count)}</strong>
-                </button>`).join("")}
-            </div>
-          </article>
-        </div>
-        <div class="dashboard-stack">
-          <article class="panel-card">
-            <div class="panel-header"><div><h3>Offices</h3><p>Authorized device coverage</p></div></div>
-            <div class="panel-body office-list">
-              ${data.offices.length ? data.offices.map((office) => `
-                <div class="office-row">
-                  <div><strong>${e(office.office_name)}</strong><span>${number(office.active_devices)} active of ${number(office.devices)}</span></div>
-                  <span>${office.last_seen_at ? formatDate(office.last_seen_at) : "Never seen"}</span>
-                </div>`).join("") : "<div class='cell-muted'>No offices configured.</div>"}
-            </div>
-          </article>
-          <article class="panel-card">
-            <div class="panel-header"><div><h3>System health</h3><p>Jobs, inventory and access</p></div></div>
-            <div class="panel-body status-list">
-              ${jobs.map(([key, value]) => `<div class="status-row"><span>Jobs ? ${e(key)}</span><strong>${number(value)}</strong></div>`).join("") || "<div class='status-row'><span>Jobs</span><strong>0</strong></div>"}
-              ${pools.map(([key, value]) => `<div class="status-row"><span>Proxies ? ${e(key)}</span><strong>${number(value)}</strong></div>`).join("")}
-              <div class="status-row"><span>Access allowed ? 24h</span><strong>${number(data.bootstrap_status.allowed)}</strong></div>
-              <div class="status-row"><span>Access denied ? 24h</span><strong>${number(data.bootstrap_status.denied)}</strong></div>
-            </div>
-          </article>
-        </div>
+      <div class="operations-layout">
+        <article class="panel-card">
+          <div class="panel-header"><div><h3>Common tasks</h3><p>Go straight to the control you need.</p></div></div>
+          <div class="panel-body operation-grid">
+            ${data.management.map((item) => `<button class="operation-card" data-go="${e(item.key)}"><span>${e(item.label)}</span><small>${e(item.description)}</small><strong>${number(item.count)}</strong></button>`).join("")}
+          </div>
+        </article>
+        <article class="panel-card">
+          <div class="panel-header"><div><h3>Office status</h3><p>Authorized PCs by office.</p></div></div>
+          <div class="panel-body office-list">
+            ${data.offices.length ? data.offices.map((office) => `<div class="office-row"><div><strong>${e(office.office_name)}</strong><span>${number(office.active_devices)} active of ${number(office.devices)}</span></div><span>${office.last_seen_at ? formatDate(office.last_seen_at) : "Never seen"}</span></div>`).join("") : "<div class='cell-muted'>No offices configured.</div>"}
+          </div>
+        </article>
       </div>`;
-    bindDomainDetails();
     content.querySelectorAll("[data-go]").forEach((item) => {
       item.addEventListener("click", () => navigate(item.dataset.go));
     });

@@ -19,6 +19,11 @@ from .models import (
     ClientAccess,
     ClientAccessIP,
     ConfigBundle,
+    DesktopComponentRelease,
+    DesktopOfficeAccessPolicy,
+    DesktopRelease,
+    DesktopRuntimeConfiguration,
+    DesktopSecurityConfiguration,
     ExtensionPackage,
     ProfileActivity,
     Provider,
@@ -475,6 +480,175 @@ def panel_resource_api(request: HttpRequest, resource: str) -> JsonResponse:
                 d("updated_at", "Updated"),
             ],
             admin_url=reverse("admin:control_configbundle_changelist"),
+        )
+
+    if resource == "device-permissions":
+        queryset = ClientAccess.objects.select_related("config_bundle")
+        if query:
+            queryset = queryset.filter(
+                Q(name__icontains=query)
+                | Q(office_name__icontains=query)
+                | Q(system_number__icontains=query)
+                | Q(device_id__icontains=query)
+            )
+
+        def device_permission_row(row):
+            resolved = DesktopOfficeAccessPolicy.resolve_for(row)
+            return {
+                "device": row.name,
+                "office": row.office_name,
+                "system": row.system_number,
+                "source": resolved["source"],
+                "providers": ", ".join(resolved["providers"]) or "None",
+                "browsers": ", ".join(resolved["browsers"]) or "None",
+                "devices": ", ".join(resolved["devices"]) or "None",
+                "logs": resolved["show_logs"],
+                "active": row.active,
+                "admin_url": admin_change("clientaccess", row.pk),
+            }
+
+        return _resource_page(
+            request,
+            queryset.order_by("office_name", "system_number", "name"),
+            device_permission_row,
+            title="Per-PC OPTIX access",
+            description="Resolved provider, browser, device and Logs access for each installation.",
+            columns=[
+                t("device", "PC"), t("office", "Office"), t("system", "System"),
+                t("source", "Permission source"), t("providers", "Providers"),
+                t("browsers", "Browsers"), t("devices", "Profile devices"),
+                s("logs", "Logs"), s("active", "Access"),
+            ],
+            admin_url=reverse("admin:control_clientaccess_changelist"),
+        )
+
+    if resource == "office-access":
+        queryset = DesktopOfficeAccessPolicy.objects.all()
+        if query:
+            queryset = queryset.filter(office_name__icontains=query)
+        return _resource_page(
+            request,
+            queryset.order_by("office_name"),
+            lambda row: {
+                "office": row.office_name,
+                "providers": ", ".join(row.allowed_provider_codes or []) or "None",
+                "browsers": ", ".join(row.allowed_browser_codes or []) or "None",
+                "devices": ", ".join(row.allowed_device_codes or []) or "None",
+                "logs": row.show_logs,
+                "active": row.active,
+                "updated_at": iso(row.updated_at),
+                "admin_url": admin_change("desktopofficeaccesspolicy", row.pk),
+            },
+            title="Office OPTIX access",
+            description="Office defaults inherited by every PC without an individual override.",
+            columns=[
+                t("office", "Office"), t("providers", "Providers"),
+                t("browsers", "Browsers"), t("devices", "Profile devices"),
+                s("logs", "Logs"), s("active", "Active"),
+                d("updated_at", "Updated"),
+            ],
+            admin_url=reverse("admin:control_desktopofficeaccesspolicy_changelist"),
+        )
+
+    if resource == "desktop-releases":
+        queryset = DesktopRelease.objects.all()
+        if query:
+            queryset = queryset.filter(
+                Q(version__icontains=query) | Q(channel__icontains=query)
+                | Q(status__icontains=query)
+            )
+        return _resource_page(
+            request, queryset.order_by("-build_number"),
+            lambda row: {
+                "version": row.version, "build": row.build_number,
+                "channel": row.channel, "mode": row.mode, "status": row.status,
+                "target": "All devices" if not row.target_offices and not row.target_device_ids else "Targeted",
+                "published_at": iso(row.published_at),
+                "admin_url": admin_change("desktoprelease", row.pk),
+            },
+            title="OPTIX installer releases",
+            description="Signed Windows installers, release channels and rollout targeting.",
+            columns=[
+                t("version", "Version"), t("build", "Build"),
+                t("channel", "Channel"), t("mode", "Install mode"),
+                s("status", "Status"), t("target", "Audience"),
+                d("published_at", "Published"),
+            ],
+            admin_url=reverse("admin:control_desktoprelease_changelist"),
+        )
+
+    if resource == "desktop-components":
+        queryset = DesktopComponentRelease.objects.all()
+        if query:
+            queryset = queryset.filter(
+                Q(component__icontains=query) | Q(version__icontains=query)
+                | Q(channel__icontains=query) | Q(status__icontains=query)
+            )
+        return _resource_page(
+            request, queryset.order_by("-build_number"),
+            lambda row: {
+                "component": row.component, "slot": row.slot,
+                "version": row.version, "build": row.build_number,
+                "channel": row.channel, "activation": row.activation,
+                "status": row.status, "published_at": iso(row.published_at),
+                "admin_url": admin_change("desktopcomponentrelease", row.pk),
+            },
+            title="OPTIX live updates",
+            description="UI, engine, config, bridge, browser and extension rollouts.",
+            columns=[
+                t("component", "Component"), t("slot", "Slot"),
+                t("version", "Version"), t("build", "Build"),
+                t("channel", "Channel"), t("activation", "Activation"),
+                s("status", "Status"), d("published_at", "Published"),
+            ],
+            admin_url=reverse("admin:control_desktopcomponentrelease_changelist"),
+        )
+
+    if resource == "desktop-runtime":
+        queryset = DesktopRuntimeConfiguration.objects.all()
+        return _resource_page(
+            request, queryset.order_by("channel"),
+            lambda row: {
+                "channel": row.channel, "revision": row.revision,
+                "active": row.active,
+                "options": len(row.ui_config or {}),
+                "updated_at": iso(row.updated_at),
+                "admin_url": admin_change("desktopruntimeconfiguration", row.pk),
+            },
+            title="OPTIX runtime settings",
+            description="Non-secret live configuration applied when users press Reload.",
+            columns=[
+                t("channel", "Channel"), t("revision", "Revision"),
+                t("options", "Configuration keys"), s("active", "Active"),
+                d("updated_at", "Updated"),
+            ],
+            admin_url=reverse("admin:control_desktopruntimeconfiguration_changelist"),
+        )
+
+    if resource == "desktop-security":
+        queryset = DesktopSecurityConfiguration.objects.all()
+        return _resource_page(
+            request, queryset.order_by("pk"),
+            lambda row: {
+                "activation": row.activation_required,
+                "activation_revision": row.activation_revision,
+                "activation_hint": row.activation_key_hint or "Not set",
+                "b1": row.b1_enabled,
+                "b1_revision": row.b1_revision,
+                "b1_hint": row.b1_key_hint or "Not set",
+                "updated_at": iso(row.updated_at),
+                "admin_url": admin_change("desktopsecurityconfiguration", row.pk),
+            },
+            title="OPTIX security controls",
+            description="Activation and B1 availability. Secret values are never exposed here.",
+            columns=[
+                s("activation", "Activation required"),
+                t("activation_revision", "Activation revision"),
+                t("activation_hint", "Activation key"), s("b1", "B1 enabled"),
+                t("b1_revision", "B1 revision"), t("b1_hint", "B1 key"),
+                d("updated_at", "Updated"),
+            ],
+            admin_url=reverse("admin:control_desktopsecurityconfiguration_changelist"),
         )
 
     if resource == "groups":
