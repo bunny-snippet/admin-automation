@@ -163,6 +163,9 @@ class OperationsPanelTests(TestCase):
         self.assertIsNone(self.device.desktop_remote_action_acknowledged_at)
 
     def test_optix_workspace_reports_legacy_usage_and_rotates_activation(self):
+        self.device.desktop_client_product = ClientAccess.DESKTOP_PRODUCT_LEGACY
+        self.device.desktop_client_version = "1.7.42"
+        self.device.save(update_fields=("desktop_client_product", "desktop_client_version", "updated_at"))
         BootstrapAudit.objects.create(
             client=self.device,
             observed_ip=self.device.ipv4,
