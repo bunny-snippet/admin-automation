@@ -94,7 +94,17 @@ def _app_version_tuple(value: str) -> tuple[int, ...]:
     return tuple(int(part) for part in parts[:4])
 
 
-def _legacy_p3_location_catalog(client: ClientAccess, app_version: str) -> bool:
+def _legacy_p3_location_catalog(
+    client: ClientAccess,
+    app_version: str,
+    update_protocol: int = 0,
+) -> bool:
+    # OPTIX speaks the structured component-update protocol and has dedicated
+    # country/region/city controls.  Its product version currently overlaps
+    # the old desktop version range, so version-only detection would flatten
+    # thousands of locations into its Country select and truncate the list.
+    if int(update_protocol or 0) >= 2:
+        return False
     if str(client.office_name or "").strip().casefold() not in LEGACY_P3_LOCATION_OFFICES:
         return False
     parsed = _app_version_tuple(app_version)
@@ -191,7 +201,16 @@ def _decode_p3_legacy_location(
     if provider_code != "P3" or not raw.startswith(("P3R_", "P3C_")):
         country_code = raw.upper()
         return ("GB" if country_code == "UK" else country_code, region, city)
-    decoded = _legacy_p3_location_aliases().get(raw)
+    aliases = _legacy_p3_location_aliases()
+    decoded = aliases.get(raw)
+    if decoded is None:
+        # Some desktop clients normalize select values to upper-case.  Keep
+        # the stable prefix/country upper-case while accepting the hex digest
+        # case-insensitively so an already-rendered legacy choice still works.
+        parts = raw.split("_", 2)
+        if len(parts) == 3:
+            canonical = f"{parts[0].upper()}_{parts[1].upper()}_{parts[2].lower()}"
+            decoded = aliases.get(canonical)
     if decoded is None:
         raise ValueError("Unsupported legacy P3 location")
     return decoded
@@ -683,6 +702,7 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
             flatten_p3_locations=_legacy_p3_location_catalog(
                 client,
                 app_version,
+                update_protocol,
             )
         ), "extensions": [
             {"id": item.pk, "name": item.name, "filename": item.filename,
