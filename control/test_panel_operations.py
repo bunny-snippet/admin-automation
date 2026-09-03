@@ -11,6 +11,7 @@ from .models import (
     ClientAccessIP,
     ConfigBundle,
     DesktopOfficeAccessPolicy,
+    DesktopSecurityConfiguration,
     Provider,
     ProxyPoolEntry,
     ProxyPoolTarget,
@@ -110,6 +111,27 @@ class OperationsPanelTests(TestCase):
         target.refresh_from_db()
         self.assertFalse(target.active)
 
+    @patch("control.panel_operations.queue_refill_proxy_pool", return_value=True)
+    def test_proxy_country_resize_updates_child_pools_and_trims_available(self, _queue):
+        targets = [
+            ProxyPoolTarget.objects.create(config_bundle=self.bundle, provider_code="P3", country_code="US", region="CA", city="Los Angeles", target_count=3, replenish_below=1),
+            ProxyPoolTarget.objects.create(config_bundle=self.bundle, provider_code="P3", country_code="US", region="NY", city="New York", target_count=3, replenish_below=1),
+        ]
+        for target_index, target in enumerate(targets):
+            for index in range(3):
+                entry = ProxyPoolEntry(target=target, proxy_fingerprint=f"{target_index}{index}".ljust(64, "a"), state="available")
+                entry.set_proxy(f"http://user:pass@host-{target_index}-{index}:8080")
+                entry.save()
+        response = self.post("control:panel-proxy-api", {
+            "action": "resize", "scope": "device", "client_id": self.device.pk,
+            "provider": "P3", "country": "US", "target_count": 2, "threshold": 1,
+        })
+        self.assertEqual(response.status_code, 200)
+        for target in targets:
+            target.refresh_from_db()
+            self.assertEqual(target.target_count, 2)
+            self.assertEqual(target.entries.filter(state="available").count(), 2)
+
     def test_optix_policy_override_and_remote_command_are_device_bound(self):
         response = self.post("control:panel-optix-api", {
             "action": "save_office",
@@ -119,10 +141,14 @@ class OperationsPanelTests(TestCase):
             "browsers": ["B1"],
             "devices": ["desktop"],
             "show_logs": False,
+            "release_channel": "testing",
+            "activation_mode": "inherit",
         })
         self.assertEqual(response.status_code, 200)
         policy = DesktopOfficeAccessPolicy.objects.get(office_name="IPLV")
         self.assertEqual(policy.allowed_provider_codes, ["P3"])
+        self.device.refresh_from_db()
+        self.assertEqual(self.device.release_channel, ClientAccess.RELEASE_CHANNEL_TESTING)
 
         response = self.post("control:panel-optix-api", {
             "action": "schedule_uninstall",
@@ -136,10 +162,35 @@ class OperationsPanelTests(TestCase):
         self.assertEqual(self.device.desktop_remote_action_requested_by, self.user)
         self.assertIsNone(self.device.desktop_remote_action_acknowledged_at)
 
-    def test_panel_navigation_is_only_access_proxy_and_optix(self):
+    def test_optix_workspace_reports_legacy_usage_and_rotates_activation(self):
+        BootstrapAudit.objects.create(
+            client=self.device,
+            observed_ip=self.device.ipv4,
+            reported_ip=self.device.ipv4,
+            device_id=self.device.device_id,
+            allowed=True,
+            reason="allowed",
+            app_version="1.7.42",
+        )
+        response = self.client.get(reverse("control:panel-optix-api"), {"office": "IPLV"})
+        row = response.json()["rows"][0]
+        self.assertEqual(row["product"]["label"], "I am the best")
+        self.assertEqual(row["permission_source"], "Default policy")
+
+        response = self.post("control:panel-optix-api", {
+            "action": "rotate_activation_key",
+            "required": True,
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["activation_key"].startswith("OPTIX-ACT-"))
+        security = DesktopSecurityConfiguration.objects.get(pk=1)
+        self.assertTrue(security.activation_required)
+
+    def test_panel_navigation_has_focused_operations_and_releases(self):
         response = self.client.get(reverse("control:panel"))
         self.assertContains(response, 'data-route="access"')
         self.assertContains(response, 'data-route="proxy"')
         self.assertContains(response, 'data-route="optix"')
+        self.assertContains(response, 'data-route="releases"')
         self.assertNotContains(response, 'data-route="overview"')
         self.assertNotContains(response, "Domain activity")

@@ -511,12 +511,14 @@ class ClientAccessAdmin(admin.ModelAdmin):
         "release_channel",
         "optix_backend",
         "activation_mode",
+        "desktop_client_product",
+        "desktop_client_version",
         "desktop_permissions_override",
         "desktop_remote_action",
         "active",
         "last_seen_at",
     )
-    list_filter = ("active", "optix_backend", "release_channel", "activation_mode", "desktop_permissions_override", "desktop_remote_action", "office_name", "config_bundle")
+    list_filter = ("active", "optix_backend", "release_channel", "activation_mode", "desktop_client_product", "desktop_permissions_override", "desktop_remote_action", "office_name", "config_bundle")
     list_editable = ("optix_backend", "activation_mode")
     search_fields = (
         "name",
