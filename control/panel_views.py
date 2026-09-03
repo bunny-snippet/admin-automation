@@ -614,41 +614,11 @@ def panel_office_audit(request: HttpRequest) -> HttpResponse:
 def panel_overview_api(request: HttpRequest) -> JsonResponse:
     now = timezone.now()
     since = now - timedelta(hours=24)
-    domain_recent = ProfileDomainActivity.objects.filter(last_visited_at__gte=since)
-    domain_totals = domain_recent.aggregate(
-        visits=Sum("visit_count"),
-        domains=Count("domain", distinct=True),
-        profiles=Count("profile_id", distinct=True),
-        sessions=Count("session_id", distinct=True),
-    )
-    job_status = {
-        row["status"]: row["count"]
-        for row in ProxyGenerationJob.objects.values("status").annotate(count=Count("id"))
-    }
-    pool_status = {
-        row["state"]: row["count"]
-        for row in ProxyPoolEntry.objects.values("state").annotate(count=Count("id"))
-    }
     bootstrap_status = BootstrapAudit.objects.filter(created_at__gte=since).aggregate(
         total=Count("id"),
         allowed_count=Count("id", filter=Q(allowed=True)),
         denied_count=Count("id", filter=Q(allowed=False)),
     )
-    recent_domains = [
-        domain_row(row)
-        for row in ProfileDomainActivity.objects.select_related(
-            "client", "job", "reservation"
-        ).order_by("-last_visited_at")[:8]
-    ]
-    monitored_domains = list(
-        MonitoredDomain.objects.filter(active=True).values_list("domain", flat=True)
-    )
-    suspicious_recent = [
-        domain_row(row)
-        for row in ProfileDomainActivity.objects.select_related("client")
-        .filter(domain__in=monitored_domains, last_visited_at__gte=since)
-        .order_by("-last_visited_at")[:8]
-    ]
     office_rows = ClientAccess.objects.values("office_name").annotate(
         devices=Count("id"),
         active_devices=Count("id", filter=Q(active=True)),
@@ -673,13 +643,8 @@ def panel_overview_api(request: HttpRequest) -> JsonResponse:
                 "online_24h": ClientAccess.objects.filter(
                     active=True, last_seen_at__gte=since
                 ).count(),
-                "profiles_opened_24h": profiles_opened_last_24h(),
-                "domain_visits_24h": domain_totals["visits"] or 0,
-                "unique_domains_24h": domain_totals["domains"] or 0,
-                "sessions_24h": domain_totals["sessions"] or 0,
-                "available_proxies": pool_status.get("available", 0),
-                "suspicious_activity_24h": ProfileDomainActivity.objects.filter(
-                    domain__in=monitored_domains, last_visited_at__gte=since
+                "available_proxies": ProxyPoolEntry.objects.filter(
+                    state="available"
                 ).count(),
                 "proxy_targets": ProxyPoolTarget.objects.filter(active=True).count(),
                 "queued_jobs": ProxyGenerationJob.objects.filter(
@@ -693,16 +658,11 @@ def panel_overview_api(request: HttpRequest) -> JsonResponse:
                 ).count(),
                 "office_policies": DesktopOfficeAccessPolicy.objects.filter(active=True).count(),
             },
-            "job_status": job_status,
-            "pool_status": pool_status,
             "bootstrap_status": {
                 "total": bootstrap_status["total"],
                 "allowed": bootstrap_status["allowed_count"],
                 "denied": bootstrap_status["denied_count"],
             },
-            "recent_domains": recent_domains,
-            "suspicious_recent": suspicious_recent,
-            "monitored_domains": monitored_domains,
             "offices": offices,
             "management": [
                 {"key": "devices", "label": "IP whitelist", "count": ClientAccess.objects.count(), "description": "Authorized PCs and office IP access"},
