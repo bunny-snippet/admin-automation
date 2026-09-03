@@ -11,13 +11,9 @@
 <body>
   <div class="mobile-overlay" data-sidebar-close></div>
   <div class="app-shell" id="panel-app"
-       data-overview-url="{% url 'control:panel-overview-api' %}"
-       data-devices-url="{% url 'control:panel-devices-api' %}"
-       data-subadmins-url="{% url 'control:panel-subadmins-api' %}"
-       data-domain-url="{% url 'control:panel-domain-activity-api' %}"
-       data-suspicious-url="{% url 'control:panel-suspicious-activity-api' %}"
-       data-domain-export-url="{% url 'control:panel-domain-activity-export' %}"
-       data-resource-url="{% url 'control:panel-resource-api' resource='__resource__' %}">
+       data-access-url="{% url 'control:panel-access-api' %}"
+       data-proxy-url="{% url 'control:panel-proxy-api' %}"
+       data-optix-url="{% url 'control:panel-optix-api' %}">
     <aside class="sidebar" aria-label="Primary navigation">
       <div class="brand">
         <div class="brand-mark">W</div>
@@ -33,33 +29,10 @@
 
       <nav class="nav-stack">
         <div class="nav-section">
-          <p>Workspace</p>
-          <button class="nav-item is-active" data-route="overview"><span class="nav-icon">01</span><span>Overview</span></button>
-        </div>
-
-        <div class="nav-section">
-          <p>IP &amp; access</p>
-          <button class="nav-item" data-route="devices"><span class="nav-icon">02</span><span>Device whitelist</span></button>
-          <a class="nav-item" href="{% url 'control:panel-office-ip-whitelist' %}"><span class="nav-icon">03</span><span>Office IP update</span></a>
-          <button class="nav-item" data-route="access-audit"><span class="nav-icon">04</span><span>Access requests</span></button>
-        </div>
-
-        <div class="nav-section">
-          <p>Proxy operations</p>
-          <button class="nav-item" data-route="proxy-pools"><span class="nav-icon">05</span><span>Generate &amp; manage</span></button>
-          <button class="nav-item" data-route="proxy-jobs"><span class="nav-icon">06</span><span>Generation jobs</span></button>
-          <button class="nav-item" data-route="configurations"><span class="nav-icon">07</span><span>Office bundles</span></button>
-          <button class="nav-item" data-route="providers"><span class="nav-icon">08</span><span>Providers</span></button>
-        </div>
-
-        <div class="nav-section">
-          <p>OPTIX control</p>
-          <button class="nav-item" data-route="office-access"><span class="nav-icon">09</span><span>Office permissions</span></button>
-          <button class="nav-item" data-route="device-permissions"><span class="nav-icon">10</span><span>Per-PC permissions</span></button>
-          <button class="nav-item" data-route="desktop-releases"><span class="nav-icon">11</span><span>Installer releases</span></button>
-          <button class="nav-item" data-route="desktop-components"><span class="nav-icon">12</span><span>Live updates</span></button>
-          <button class="nav-item" data-route="desktop-runtime"><span class="nav-icon">13</span><span>Runtime settings</span></button>
-          <button class="nav-item" data-route="desktop-security"><span class="nav-icon">14</span><span>Activation &amp; B1</span></button>
+          <p>Operations</p>
+          <button class="nav-item is-active" data-route="access"><span class="nav-icon">A</span><span>Access</span></button>
+          <button class="nav-item" data-route="proxy"><span class="nav-icon">P</span><span>Proxy</span></button>
+          <button class="nav-item" data-route="optix"><span class="nav-icon">O</span><span>OPTIX Control</span></button>
         </div>
       </nav>
 
@@ -84,12 +57,15 @@
         <div class="topbar-left">
           <button class="mobile-menu" type="button" data-sidebar-open aria-label="Open menu">Menu</button>
           <div>
-            <div class="breadcrumb">Warrior <span>/</span> <span id="page-breadcrumb">Overview</span></div>
-            <h1 id="page-title">Operations</h1>
+            <div class="breadcrumb">Warrior <span>/</span> <span id="page-breadcrumb">Access</span></div>
+            <h1 id="page-title">Access</h1>
           </div>
         </div>
         <div class="topbar-actions">
-          <span class="sync-status"><span class="pulse-dot"></span><span id="sync-label">Live data</span></span>
+          <button class="notification-button" type="button" id="notification-button" aria-label="Open access notifications">
+            <span class="notification-icon">Bell</span><span class="notification-count" id="notification-count" hidden>0</span>
+          </button>
+          <span class="sync-status"><span class="pulse-dot"></span><span id="sync-label">Live</span></span>
           <button class="button button-secondary" type="button" id="refresh-button">Refresh</button>
         </div>
       </header>
@@ -107,19 +83,7 @@
     </main>
   </div>
 
-  <dialog class="detail-dialog" id="detail-dialog">
-    <div class="dialog-header">
-      <div>
-        <span class="eyebrow">Domain record</span>
-        <h2 id="detail-title">Activity details</h2>
-      </div>
-      <button type="button" class="dialog-close" data-dialog-close aria-label="Close details">Close</button>
-    </div>
-    <div id="detail-content"></div>
-  </dialog>
-
-  <dialog class="detail-dialog management-dialog" id="device-dialog"></dialog>
-  <dialog class="detail-dialog management-dialog" id="subadmin-dialog"></dialog>
+  <dialog class="detail-dialog side-drawer" id="detail-dialog"></dialog>
 
   <template id="error-template">
     <div class="empty-state">
