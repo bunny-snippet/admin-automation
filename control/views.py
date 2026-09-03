@@ -200,6 +200,21 @@ def _app_version_tuple(value: str) -> tuple[int, ...]:
     return tuple(int(part) for part in parts[:4])
 
 
+def _desktop_product(value: str, app_version: str, activation_key: str) -> str:
+    """Identify the caller without treating a permission assignment as usage."""
+    reported = str(value or "").strip().casefold()
+    if reported in {ClientAccess.DESKTOP_PRODUCT_OPTIX, ClientAccess.DESKTOP_PRODUCT_LEGACY}:
+        return reported
+    if activation_key:
+        return ClientAccess.DESKTOP_PRODUCT_OPTIX
+    parsed = _app_version_tuple(app_version)
+    if parsed and parsed[:2] >= (1, 7):
+        return ClientAccess.DESKTOP_PRODUCT_LEGACY
+    if parsed:
+        return ClientAccess.DESKTOP_PRODUCT_OPTIX
+    return ClientAccess.DESKTOP_PRODUCT_UNKNOWN
+
+
 def _legacy_p3_location_catalog(
     client: ClientAccess,
     app_version: str,
@@ -602,6 +617,7 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
     update_protocol = 0
     activation_key = ""
     activation_revision = 0
+    client_product = ""
     try:
         if settings.TRUST_APP_REPORTED_IPV4:
             # In approved app-reported mode the transport address is audit-only.
@@ -622,6 +638,7 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
         update_protocol = int(body.get("update_protocol") or 0)
         activation_key = str(body.get("activation_key") or "").strip()[:512]
         activation_revision = int(body.get("activation_revision") or 0)
+        client_product = str(body.get("client_product") or "").strip()[:16]
         if (
             app_build < 0
             or app_build > 9_223_372_036_854_775_807
@@ -782,7 +799,22 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
         "activation_enforced": activation_is_required,
     }
     token = signing.dumps(token_payload, salt=TOKEN_SALT, compress=True)
-    ClientAccess.objects.filter(pk=client.pk).update(last_seen_at=timezone.now())
+    detected_product = _desktop_product(client_product, app_version, activation_key)
+    detected_activation_revision = 0
+    if (
+        detected_product == ClientAccess.DESKTOP_PRODUCT_OPTIX
+        and security is not None
+        and activation_key
+        and security.check_activation_key(activation_key)
+    ):
+        detected_activation_revision = int(security.activation_revision)
+    ClientAccess.objects.filter(pk=client.pk).update(
+        last_seen_at=timezone.now(),
+        desktop_client_product=detected_product,
+        desktop_client_version=app_version[:40],
+        desktop_client_detected_at=timezone.now(),
+        desktop_activation_revision=detected_activation_revision,
+    )
     _audit(
         observed_ip=observed_ip,
         reported_ip=reported_ip,
