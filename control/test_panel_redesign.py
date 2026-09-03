@@ -43,9 +43,10 @@ class FocusedOperationsPanelTests(TestCase):
     def test_panel_navigation_contains_only_focused_operations(self):
         response = self.client.get(reverse("control:panel"))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Proxy operations")
-        self.assertContains(response, "OPTIX control")
-        self.assertContains(response, "Office permissions")
+        self.assertContains(response, 'data-route="access"')
+        self.assertContains(response, 'data-route="proxy"')
+        self.assertContains(response, 'data-route="optix"')
+        self.assertContains(response, "OPTIX Control")
         self.assertNotContains(response, "Suspicious activity")
         self.assertNotContains(response, "Domain activity")
 
