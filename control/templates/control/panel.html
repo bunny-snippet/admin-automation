@@ -20,10 +20,10 @@
        data-resource-url="{% url 'control:panel-resource-api' resource='__resource__' %}">
     <aside class="sidebar" aria-label="Primary navigation">
       <div class="brand">
-        <div class="brand-mark">AC</div>
+        <div class="brand-mark">W</div>
         <div>
-          <strong>Automation</strong>
-          <span>Control Center</span>
+          <strong>Warrior</strong>
+          <span>Operations</span>
         </div>
       </div>
       <div class="environment">
@@ -33,74 +33,33 @@
 
       <nav class="nav-stack">
         <div class="nav-section">
-          <p>Operations</p>
-          <button class="nav-item is-active" data-route="overview">
-            <span class="nav-icon">OV</span><span>Overview</span>
-          </button>
-          <button class="nav-item" data-route="domains">
-            <span class="nav-icon">DA</span><span>Domain activity</span>
-          </button>
-          <button class="nav-item" data-route="suspicious">
-            <span class="nav-icon">SA</span><span>Suspicious activity</span>
-          </button>
-          <a class="nav-item" href="{% url 'control:panel-office-audit' %}">
-            <span class="nav-icon">OA</span><span>Office profile audit</span>
-          </a>
+          <p>Workspace</p>
+          <button class="nav-item is-active" data-route="overview"><span class="nav-icon">01</span><span>Overview</span></button>
         </div>
 
         <div class="nav-section">
-          <p>Management</p>
-          <button class="nav-item" data-route="devices">
-            <span class="nav-icon">DV</span><span>Devices</span>
-          </button>
-          <a class="nav-item" href="{% url 'control:panel-office-ip-whitelist' %}">
-            <span class="nav-icon">IP</span><span>Office IP whitelist</span>
-          </a>
-          <a class="nav-item" href="{% url 'control:mobile-ops' %}">
-            <span class="nav-icon">MO</span><span>Mobile quick ops</span>
-          </a>
-          <button class="nav-item" data-route="configurations">
-            <span class="nav-icon">CF</span><span>Config bundles</span>
-          </button>
-          <button class="nav-item" data-route="subadmins"><span class="nav-icon">SA</span><span>Sub-admin access</span></button>
-          <button class="nav-item" data-route="groups">
-            <span class="nav-icon">GR</span><span>Browser groups</span>
-          </button>
-          <button class="nav-item" data-route="providers">
-            <span class="nav-icon">PR</span><span>Providers</span>
-          </button>
-          <button class="nav-item" data-route="proxy-catalog">
-            <span class="nav-icon">PC</span><span>Proxy catalog</span>
-          </button>
-          <button class="nav-item" data-route="extensions">
-            <span class="nav-icon">EX</span><span>Extensions</span>
-          </button>
+          <p>IP &amp; access</p>
+          <button class="nav-item" data-route="devices"><span class="nav-icon">02</span><span>Device whitelist</span></button>
+          <a class="nav-item" href="{% url 'control:panel-office-ip-whitelist' %}"><span class="nav-icon">03</span><span>Office IP update</span></a>
+          <button class="nav-item" data-route="access-audit"><span class="nav-icon">04</span><span>Access requests</span></button>
         </div>
 
         <div class="nav-section">
-          <p>Infrastructure</p>
-          <button class="nav-item" data-route="proxy-pools">
-            <span class="nav-icon">PL</span><span>Proxy pools</span>
-          </button>
-          <button class="nav-item" data-route="proxy-inventory">
-            <span class="nav-icon">PI</span><span>Proxy inventory</span>
-          </button>
-          <button class="nav-item" data-route="proxy-jobs">
-            <span class="nav-icon">JB</span><span>Generation jobs</span>
-          </button>
-          <button class="nav-item" data-route="reservations">
-            <span class="nav-icon">RS</span><span>Reservations</span>
-          </button>
+          <p>Proxy operations</p>
+          <button class="nav-item" data-route="proxy-pools"><span class="nav-icon">05</span><span>Generate &amp; manage</span></button>
+          <button class="nav-item" data-route="proxy-jobs"><span class="nav-icon">06</span><span>Generation jobs</span></button>
+          <button class="nav-item" data-route="configurations"><span class="nav-icon">07</span><span>Office bundles</span></button>
+          <button class="nav-item" data-route="providers"><span class="nav-icon">08</span><span>Providers</span></button>
         </div>
 
         <div class="nav-section">
-          <p>Audit</p>
-          <button class="nav-item" data-route="profile-activity">
-            <span class="nav-icon">PA</span><span>Profile activity</span>
-          </button>
-          <button class="nav-item" data-route="access-audit">
-            <span class="nav-icon">AA</span><span>Access audit</span>
-          </button>
+          <p>OPTIX control</p>
+          <button class="nav-item" data-route="office-access"><span class="nav-icon">09</span><span>Office permissions</span></button>
+          <button class="nav-item" data-route="device-permissions"><span class="nav-icon">10</span><span>Per-PC permissions</span></button>
+          <button class="nav-item" data-route="desktop-releases"><span class="nav-icon">11</span><span>Installer releases</span></button>
+          <button class="nav-item" data-route="desktop-components"><span class="nav-icon">12</span><span>Live updates</span></button>
+          <button class="nav-item" data-route="desktop-runtime"><span class="nav-icon">13</span><span>Runtime settings</span></button>
+          <button class="nav-item" data-route="desktop-security"><span class="nav-icon">14</span><span>Activation &amp; B1</span></button>
         </div>
       </nav>
 
@@ -125,8 +84,8 @@
         <div class="topbar-left">
           <button class="mobile-menu" type="button" data-sidebar-open aria-label="Open menu">Menu</button>
           <div>
-            <div class="breadcrumb">Control Center <span>/</span> <span id="page-breadcrumb">Overview</span></div>
-            <h1 id="page-title">Operations overview</h1>
+            <div class="breadcrumb">Warrior <span>/</span> <span id="page-breadcrumb">Overview</span></div>
+            <h1 id="page-title">Operations</h1>
           </div>
         </div>
         <div class="topbar-actions">
