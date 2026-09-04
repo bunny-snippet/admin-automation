@@ -89,11 +89,20 @@ class OperationsPanelTests(TestCase):
             "client_id": self.device.pk,
             "provider": "P3",
             "country": "US",
+            "region": "CA",
             "target_count": 100,
             "threshold": 20,
         })
         self.assertEqual(response.status_code, 200)
-        target = ProxyPoolTarget.objects.get(config_bundle=self.bundle, provider_code="P3", country_code="US")
+        self.assertIn("P3 US / CA / Any city", response.json()["message"])
+        self.assertIn("1 new location pool(s)", response.json()["message"])
+        target = ProxyPoolTarget.objects.get(
+            config_bundle=self.bundle,
+            provider_code="P3",
+            country_code="US",
+            region="CA",
+            city="",
+        )
         entry = ProxyPoolEntry(target=target, proxy_fingerprint="f" * 64, state="available")
         entry.set_proxy("http://user:pass@example.com:8080")
         entry.save()
