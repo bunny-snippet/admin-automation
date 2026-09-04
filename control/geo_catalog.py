@@ -111,7 +111,7 @@ def ensure_global_country_catalog() -> int:
 
 
 def ensure_p1_region_catalog() -> int:
-    """Seed the state/province codes Nimble officially accepts for US and CA."""
+    """Seed ISO state/province codes used by P1 geography targeting."""
     provider = Provider.objects.get(code="P1")
     existing = set(
         ProxyRegionCatalog.objects.filter(provider=provider).values_list(
@@ -121,8 +121,6 @@ def ensure_p1_region_catalog() -> int:
     missing: list[ProxyRegionCatalog] = []
     for item in pycountry.subdivisions:
         country_code = str(item.country_code).upper()
-        if country_code not in {"US", "CA"}:
-            continue
         region_code = str(item.code).rsplit("-", 1)[-1]
         if (country_code, region_code) in existing:
             continue
