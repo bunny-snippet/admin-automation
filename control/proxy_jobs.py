@@ -16,6 +16,7 @@ from .models import (
     ProxyPoolTarget,
     ProxyReservation,
 )
+from .p3_routing import p3_subdivision_selector
 
 
 def proxy_fingerprint(value: str) -> str:
@@ -39,6 +40,39 @@ def _repair_legacy_p3_city_proxy(value: str, city: str) -> str:
     password = urllib.parse.unquote(parsed.password or "")
     repaired_username, substitutions = re.subn(
         r"(?<=-city-).*?(?=-session-)", requested_city, username, count=1
+    )
+    if not substitutions or repaired_username == username:
+        return value
+    host = parsed.hostname or ""
+    if not host:
+        return value
+    port = f":{parsed.port}" if parsed.port else ""
+    auth = (
+        f"{urllib.parse.quote(repaired_username, safe='')}:"
+        f"{urllib.parse.quote(password, safe='')}@"
+    )
+    return urllib.parse.urlunsplit(
+        (parsed.scheme, f"{auth}{host}{port}", parsed.path, parsed.query, parsed.fragment)
+    )
+
+
+def _repair_legacy_p3_region_proxy(
+    value: str,
+    country: str,
+    region: str,
+) -> str:
+    """Add ISO parent fallbacks to an already-stocked P3 region proxy."""
+    selector = p3_subdivision_selector(country, region)
+    if not selector or selector == str(region or "").strip().upper():
+        return value
+    parsed = urllib.parse.urlsplit(value)
+    username = urllib.parse.unquote(parsed.username or "")
+    password = urllib.parse.unquote(parsed.password or "")
+    repaired_username, substitutions = re.subn(
+        r"(?<=-subdivision-).*?(?=-(?:city|session)-)",
+        selector,
+        username,
+        count=1,
     )
     if not substitutions or repaired_username == username:
         return value
@@ -156,6 +190,16 @@ def reserve_pool_proxies(
     issued: list[ProxyReservation] = []
     for entry in entries:
         value = entry.get_proxy()
+        if provider_code == "P3" and region:
+            repaired_value = _repair_legacy_p3_region_proxy(
+                value,
+                country_code,
+                region,
+            )
+            if repaired_value != value:
+                entry.set_proxy(repaired_value)
+                entry.proxy_fingerprint = proxy_fingerprint(repaired_value)
+                value = repaired_value
         if provider_code == "P3" and city:
             repaired_value = _repair_legacy_p3_city_proxy(value, city)
             if repaired_value != value:
