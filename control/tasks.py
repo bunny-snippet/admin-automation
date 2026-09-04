@@ -27,6 +27,7 @@ from .models import (
     ProxyPoolTarget,
     ProxyRegionCatalog,
 )
+from .p3_routing import p3_subdivision_selector
 from .proxy_jobs import fulfill_waiting_jobs, get_or_create_pool_target, proxy_fingerprint
 
 
@@ -151,7 +152,9 @@ def _generate(
         for _index in range(count):
             user = f"{username}-country-{country}"
             if region:
-                user += f"-subdivision-{region}"
+                user += (
+                    f"-subdivision-{p3_subdivision_selector(country, region)}"
+                )
             if city:
                 # Massive expects the preferred English city spelling.  The
                 # complete username is URL-encoded by _proxy_url(), so keep

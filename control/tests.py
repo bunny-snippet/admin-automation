@@ -48,7 +48,8 @@ from .release_updates import (
     verify_release_signature,
 )
 from .management.commands.prefill_p2_geo_pools import _sync_city_catalog
-from .proxy_jobs import reserve_pool_proxies
+from .p3_routing import p3_subdivision_selector
+from .proxy_jobs import _repair_legacy_p3_region_proxy, reserve_pool_proxies
 from .tasks import (
     _generate, ensure_pool_targets, provider_is_configured, queue_refill_proxy_pool,
     refill_proxy_pool,
@@ -133,6 +134,57 @@ class LegacyP3LocationTests(SimpleTestCase):
                 for identifier in identifiers
             )
         )
+
+
+class P3SubdivisionRoutingTests(SimpleTestCase):
+    def test_nested_subdivision_keeps_requested_code_then_parent(self):
+        self.assertEqual(p3_subdivision_selector("IE", "MH"), "MH,L")
+
+    def test_flat_subdivision_is_unchanged(self):
+        self.assertEqual(p3_subdivision_selector("US", "CA"), "CA")
+
+    def test_p3_generation_uses_resilient_subdivision_selector(self):
+        line = _generate(
+            "P3",
+            "IE",
+            "MH",
+            "",
+            1,
+            {
+                "P3_PROXY_USERNAME": "massive-user",
+                "P3_API_KEY": "massive-password",
+                "P3_PROTOCOL": "http",
+            },
+        )[0]
+        username = unquote(urlsplit(line).username or "")
+        self.assertIn("-country-IE-subdivision-MH,L-session-", username)
+
+    def test_p3_country_only_generation_needs_no_region_or_city(self):
+        line = _generate(
+            "P3",
+            "IE",
+            "",
+            "",
+            1,
+            {
+                "P3_PROXY_USERNAME": "massive-user",
+                "P3_API_KEY": "massive-password",
+                "P3_PROTOCOL": "http",
+            },
+        )[0]
+        username = unquote(urlsplit(line).username or "")
+        self.assertIn("-country-IE-session-", username)
+        self.assertNotIn("-subdivision-", username)
+        self.assertNotIn("-city-", username)
+
+    def test_existing_region_stock_is_repaired_when_issued(self):
+        old = (
+            "http://massive-user-country-IE-subdivision-MH-session-old:"
+            "massive-password@network.joinmassive.com:65534"
+        )
+        repaired = _repair_legacy_p3_region_proxy(old, "IE", "MH")
+        username = unquote(urlsplit(repaired).username or "")
+        self.assertIn("-subdivision-MH,L-session-", username)
 
 
 @override_settings(
