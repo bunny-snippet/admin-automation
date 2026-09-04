@@ -1,9 +1,16 @@
+import base64
 import json
+from pathlib import Path
+import tempfile
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from .migration_updates import canonical_optix_migration_payload
 
 from .models import (
     BootstrapAudit,
@@ -197,6 +204,65 @@ class OperationsPanelTests(TestCase):
         self.assertTrue(response.json()["activation_key"].startswith("OPTIX-ACT-"))
         security = DesktopSecurityConfiguration.objects.get(pk=1)
         self.assertTrue(security.activation_required)
+
+    def test_optix_migration_can_target_one_system_or_all_legacy_office_pcs(self):
+        second = ClientAccess.objects.create(
+            name="IPLV system 02",
+            ipv4="198.51.100.11",
+            device_id="device-iplv-02",
+            office_name="IPLV",
+            system_number="02",
+            config_bundle=self.bundle,
+            desktop_client_product=ClientAccess.DESKTOP_PRODUCT_LEGACY,
+            desktop_client_version="1.7.44",
+        )
+        self.device.desktop_client_product = ClientAccess.DESKTOP_PRODUCT_LEGACY
+        self.device.desktop_client_version = "1.7.44"
+        self.device.save(update_fields=("desktop_client_product", "desktop_client_version", "updated_at"))
+        with tempfile.TemporaryDirectory() as directory:
+            installer = Path(directory) / "OPTIX-Setup.exe"
+            installer.write_bytes(b"MZ")
+            private = Ed25519PrivateKey.generate()
+            public = private.public_key().public_bytes(
+                serialization.Encoding.Raw,
+                serialization.PublicFormat.Raw,
+            )
+            signature = private.sign(canonical_optix_migration_payload(
+                version="1.6.1", build_number=10601, size=2, sha256="a" * 64,
+            ))
+            configured = override_settings(
+                OPTIX_MIGRATION_INSTALLER_PATH=str(installer),
+                OPTIX_MIGRATION_INSTALLER_VERSION="1.6.1",
+                OPTIX_MIGRATION_INSTALLER_BUILD=10601,
+                OPTIX_MIGRATION_INSTALLER_SIZE=2,
+                OPTIX_MIGRATION_INSTALLER_SHA256="a" * 64,
+                OPTIX_MIGRATION_INSTALLER_SIGNATURE_B64=base64.b64encode(signature).decode("ascii"),
+            )
+            with configured, patch(
+                "control.migration_updates.DESKTOP_RELEASE_PUBLIC_KEY_B64",
+                base64.b64encode(public).decode("ascii"),
+            ):
+                response = self.post("control:panel-optix-api", {
+                    "action": "schedule_migration",
+                    "client_id": self.device.pk,
+                    "scope": "system",
+                    "confirmation": "01",
+                })
+                self.assertEqual(response.status_code, 200)
+                self.device.refresh_from_db()
+                second.refresh_from_db()
+                self.assertEqual(self.device.desktop_remote_action, ClientAccess.REMOTE_ACTION_MIGRATE_OPTIX)
+                self.assertEqual(second.desktop_remote_action, ClientAccess.REMOTE_ACTION_NONE)
+
+                response = self.post("control:panel-optix-api", {
+                    "action": "schedule_migration",
+                    "client_id": self.device.pk,
+                    "scope": "office",
+                    "confirmation": "IPLV",
+                })
+                self.assertEqual(response.status_code, 200)
+                second.refresh_from_db()
+                self.assertEqual(second.desktop_remote_action, ClientAccess.REMOTE_ACTION_MIGRATE_OPTIX)
 
     def test_panel_navigation_has_focused_operations_and_releases(self):
         response = self.client.get(reverse("control:panel"))

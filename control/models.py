@@ -128,9 +128,11 @@ class ClientAccess(models.Model):
     )
     REMOTE_ACTION_NONE = ""
     REMOTE_ACTION_UNINSTALL = "uninstall"
+    REMOTE_ACTION_MIGRATE_OPTIX = "migrate_optix"
     REMOTE_ACTION_CHOICES = (
         (REMOTE_ACTION_NONE, "No remote action"),
         (REMOTE_ACTION_UNINSTALL, "Uninstall OPTIX"),
+        (REMOTE_ACTION_MIGRATE_OPTIX, "Replace legacy desktop with OPTIX"),
     )
 
     name = models.CharField(max_length=120)

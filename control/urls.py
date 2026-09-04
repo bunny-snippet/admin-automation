@@ -109,6 +109,11 @@ urlpatterns = [
         name="desktop-release-download",
     ),
     path(
+        "api/v1/optix-migration-installer/",
+        views.optix_migration_installer_download,
+        name="optix-migration-installer-download",
+    ),
+    path(
         "api/v1/desktop-components/",
         views.desktop_component_manifest,
         name="desktop-component-manifest",

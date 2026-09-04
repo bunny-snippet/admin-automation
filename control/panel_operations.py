@@ -38,6 +38,7 @@ from .models import (
     ProxyRegionCatalog,
 )
 from .panel_views import iso, panel_json
+from .migration_updates import optix_migration_manifest
 from .proxy_expansion import proxy_location_specs
 from .tasks import (
     expand_proxy_pool_scope,
@@ -633,6 +634,20 @@ def _permission_source(value: str) -> str:
     }.get(str(value or ""), "Default policy")
 
 
+OPTIX_MIGRATION_AGENT_MIN_VERSION = (1, 7, 44)
+
+
+def _desktop_version_tuple(raw: str) -> tuple[int, ...]:
+    return tuple(int(value) for value in re.findall(r"\d+", str(raw or ""))[:4])
+
+
+def _migration_agent_ready(client: ClientAccess) -> bool:
+    return (
+        client.desktop_client_product == ClientAccess.DESKTOP_PRODUCT_LEGACY
+        and _desktop_version_tuple(client.desktop_client_version) >= OPTIX_MIGRATION_AGENT_MIN_VERSION
+    )
+
+
 def _product_row(client: ClientAccess, latest_version: str = "") -> dict[str, Any]:
     product = str(client.desktop_client_product or "")
     version = str(client.desktop_client_version or latest_version or "")
@@ -766,7 +781,50 @@ def panel_optix_api(request: HttpRequest) -> JsonResponse:
                     "ok": True,
                     "message": "Remote OPTIX removal scheduled. The PC will acknowledge it before uninstalling.",
                 })
-            if action == "cancel_uninstall":
+            if action == "schedule_migration":
+                if optix_migration_manifest() is None:
+                    raise ValueError("Configure and sign the OPTIX migration installer before scheduling rollout.")
+                scope = str(body.get("scope") or "system").strip().lower()
+                if scope not in {"system", "office"}:
+                    raise ValueError("Choose an office or system rollout scope.")
+                expected = client.system_number if scope == "system" else client.office_name
+                if str(body.get("confirmation") or "").strip() != str(expected):
+                    raise ValueError(f"Enter the exact {scope} name to schedule migration.")
+                targets = ClientAccess.objects.filter(pk=client.pk)
+                if scope == "office":
+                    targets = ClientAccess.objects.filter(
+                        office_name__iexact=client.office_name,
+                        active=True,
+                        desktop_client_product=ClientAccess.DESKTOP_PRODUCT_LEGACY,
+                    )
+                else:
+                    targets = targets.filter(
+                        active=True,
+                        desktop_client_product=ClientAccess.DESKTOP_PRODUCT_LEGACY,
+                    )
+                target_rows = [target for target in targets if _migration_agent_ready(target)]
+                if not target_rows:
+                    raise ValueError(
+                        "No eligible PC matched. First roll out I am the best v1.7.44 or newer to the selected PC(s)."
+                    )
+                now = timezone.now()
+                for target in target_rows:
+                    target.desktop_remote_action = ClientAccess.REMOTE_ACTION_MIGRATE_OPTIX
+                    target.desktop_remote_action_revision += 1
+                    target.desktop_remote_action_requested_at = now
+                    target.desktop_remote_action_acknowledged_at = None
+                    target.desktop_remote_action_requested_by = request.user
+                    target.updated_at = now
+                ClientAccess.objects.bulk_update(target_rows, (
+                    "desktop_remote_action", "desktop_remote_action_revision",
+                    "desktop_remote_action_requested_at", "desktop_remote_action_acknowledged_at",
+                    "desktop_remote_action_requested_by", "updated_at",
+                ))
+                return panel_json({
+                    "ok": True,
+                    "message": f"OPTIX migration scheduled for {len(target_rows)} legacy PC(s).",
+                })
+            if action in {"cancel_uninstall", "cancel_remote_action"}:
                 if client.desktop_remote_action_acknowledged_at is not None:
                     raise ValueError("This command was already acknowledged and can no longer be cancelled.")
                 client.desktop_remote_action = ClientAccess.REMOTE_ACTION_NONE
@@ -776,7 +834,7 @@ def panel_optix_api(request: HttpRequest) -> JsonResponse:
                     "desktop_remote_action", "desktop_remote_action_requested_at",
                     "desktop_remote_action_requested_by", "updated_at",
                 ))
-                return panel_json({"ok": True, "message": "Pending OPTIX removal cancelled."})
+                return panel_json({"ok": True, "message": "Pending desktop command cancelled."})
             raise ValueError("Unknown OPTIX action.")
         except ValueError as exc:
             return panel_json({"ok": False, "message": str(exc)}, status=400)
@@ -809,6 +867,7 @@ def panel_optix_api(request: HttpRequest) -> JsonResponse:
             "remote_action_revision": selected.desktop_remote_action_revision,
             "remote_action_requested_at": iso(selected.desktop_remote_action_requested_at),
             "remote_action_acknowledged_at": iso(selected.desktop_remote_action_acknowledged_at),
+            "migration_agent_ready": _migration_agent_ready(selected),
         }
     release_channels = {row.release_channel for row in clients}
     activation_modes = {row.activation_mode for row in clients}
@@ -828,6 +887,7 @@ def panel_optix_api(request: HttpRequest) -> JsonResponse:
             "revision": int(security.activation_revision) if security else 0,
             "hint": security.activation_key_hint if security else "",
         },
+        "migration_ready": optix_migration_manifest() is not None,
         "rows": [
             {
                 "id": row.pk,
@@ -841,6 +901,7 @@ def panel_optix_api(request: HttpRequest) -> JsonResponse:
                 "product": _product_row(row),
                 "remote_action": row.desktop_remote_action,
                 "remote_acknowledged": row.desktop_remote_action_acknowledged_at is not None,
+                "migration_agent_ready": _migration_agent_ready(row),
                 "last_seen": iso(row.last_seen_at),
             }
             for row in clients
