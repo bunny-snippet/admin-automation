@@ -38,7 +38,12 @@ from .models import (
     ProxyRegionCatalog,
 )
 from .panel_views import iso, panel_json
-from .tasks import provider_is_configured, queue_refill_proxy_pool
+from .proxy_expansion import proxy_location_specs
+from .tasks import (
+    expand_proxy_pool_scope,
+    provider_is_configured,
+    queue_refill_proxy_pool,
+)
 
 
 HIDDEN_OFFICES = {"personal"}
@@ -380,37 +385,40 @@ def panel_proxy_api(request: HttpRequest) -> JsonResponse:
                 if not 1 <= target_count <= 5000 or not 1 <= threshold <= target_count:
                     raise ValueError("Target must be 1-5000 and threshold must not exceed it.")
                 bundles = list(ConfigBundle.objects.filter(pk__in=bundle_ids, active=True))
-                queued = created = missing = 0
-                for bundle in bundles:
-                    if not provider_is_configured(provider, bundle.get_payload()):
-                        missing += 1
-                        continue
-                    target, was_created = ProxyPoolTarget.objects.update_or_create(
-                        config_bundle=bundle,
-                        provider_code=provider,
-                        country_code=country,
-                        region=region,
-                        city=city,
-                        defaults={
-                            "target_count": target_count,
-                            "replenish_below": threshold,
-                            "active": True,
-                        },
-                    )
-                    created += int(was_created)
-                    queued += int(queue_refill_proxy_pool(target.pk))
-                existing = max(0, len(bundles) - missing - created)
+                specs = proxy_location_specs(provider, country, region, city)
+                if not specs:
+                    raise ValueError("The selected provider location is unavailable.")
+                configured = [
+                    bundle
+                    for bundle in bundles
+                    if provider_is_configured(provider, bundle.get_payload())
+                ]
+                missing = len(bundles) - len(configured)
+                task = expand_proxy_pool_scope.delay(
+                    [bundle.pk for bundle in bundles],
+                    provider,
+                    country,
+                    region,
+                    city,
+                    target_count,
+                    threshold,
+                )
+                level_counts = defaultdict(int)
+                for spec in specs:
+                    level_counts[spec.level] += 1
                 location = " / ".join(
-                    (country, region or "Any state", city or "Any city")
+                    (country, region or "Every state", city or "Every city")
                 )
                 _invalidate_proxy_summary()
                 return panel_json({
                     "ok": True,
+                    "task_id": str(task.id),
                     "message": (
-                        f"{provider} {location} queued for {scope_label}: "
-                        f"{queued} pool refill job(s), {created} new location pool(s), "
-                        f"{existing} existing location pool(s), "
-                        f"{missing} bundle(s) missing credentials."
+                        f"{provider} {location} expansion queued for {scope_label}: "
+                        f"{len(specs)} location(s) "
+                        f"({level_counts['country']} country, {level_counts['region']} region, "
+                        f"{level_counts['city']} city) across {len(configured)} bundle(s); "
+                        f"{missing} bundle(s) missing credentials. City pools use the safe 40/8 stock level."
                     ),
                 })
 

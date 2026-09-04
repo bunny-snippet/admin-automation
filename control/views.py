@@ -76,7 +76,7 @@ LEGACY_P3_LOCATION_MAX_APP_VERSION = (1, 7, 33, 9999)
 P3_PREFILL_GEO_PATH = (
     Path(__file__).resolve().parent / "data" / "p3_prefill_geo.json"
 )
-EXACT_CITY_CANDIDATE_LIMIT = 40
+EXACT_CITY_CANDIDATE_LIMIT = 100
 
 
 def _desktop_permissions(client: ClientAccess) -> dict[str, Any]:
@@ -1502,9 +1502,9 @@ def _ensure_dynamic_inventory(
     city: str,
     minimum_available: int,
 ) -> ProxyPoolTarget:
-    """Ensure one P2/P3 scope has enough candidates for the current request.
+    """Ensure one P1/P2/P3 scope has enough candidates for the current request.
 
-    P2/P3 API proxy generation only builds signed-in proxy usernames; it does
+    P1/P2/P3 API proxy generation only builds signed-in proxy usernames; it does
     not make a provider network request. Keeping this path synchronous prevents
     a quality-check request from draining a state/city pool while automatic
     Celery refills are disabled. Existing administrator-defined pool sizes are
@@ -1601,23 +1601,22 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
             not provider_code
             or not country_code
             or not 1 <= submitted_count <= MAX_PROFILES_PER_REQUEST
-            or not requested_count <= candidate_count <= 50
+            or not requested_count <= candidate_count <= 100
         ):
             raise ValueError("Invalid proxy request")
-        if provider_code not in {"P2", "P3"}:
+        if provider_code not in {"P1", "P2", "P3"}:
             city = ""
-        if provider_code in {"P2", "P3"} and not ProxyCountryFile.objects.filter(
+        if provider_code in {"P1", "P2", "P3"} and not ProxyCountryFile.objects.filter(
             provider__code=provider_code,
             provider__active=True,
             country_code=country_code,
             active=True,
         ).exists():
             raise ValueError("Unsupported provider country")
-        # Massive resolves city targeting independently and documents that a
-        # city takes precedence over subdivision. Store city pools without a
-        # region so the same ready inventory serves both country+city and
-        # country+state+city selections.
-        if provider_code == "P3" and city:
+        # P1 and P3 resolve city targeting independently from subdivision.
+        # Store their city pools without a region so the same ready inventory
+        # serves both country+city and country+state+city selections.
+        if provider_code in {"P1", "P3"} and city:
             region = ""
         if provider_code not in {"P1", "P2", "P3"}:
             region = ""
@@ -1653,11 +1652,11 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
             )
             if not city:
                 raise ValueError("Unsupported P2 city")
-        if provider_code == "P3" and city:
+        if provider_code in {"P1", "P3"} and city:
             city = p3_city_name(country_code, city)
             if not city:
-                raise ValueError("Unsupported P3 city")
-        if provider_code in {"P2", "P3"} and city:
+                raise ValueError(f"Unsupported {provider_code} city")
+        if provider_code in {"P1", "P2", "P3"} and city:
             # Profile creation stays deliberately small, while Tubelight can
             # quality-test a wider city batch before choosing those profiles.
             if requested_count > 10:
@@ -1669,7 +1668,7 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
 
     try:
         with transaction.atomic():
-            if provider_code in {"P2", "P3"}:
+            if provider_code in {"P1", "P2", "P3"}:
                 _ensure_dynamic_inventory(
                     client=client,
                     provider_code=provider_code,
@@ -1924,7 +1923,7 @@ def proxy_cities(
     country_code: str,
     region_code: str = "",
 ) -> JsonResponse:
-    """Return live server-managed P2/P3 cities for the authenticated client."""
+    """Return live server-managed P1/P2/P3 cities for the authenticated client."""
     try:
         client = _authenticated_client(request)
         provider = str(provider_code or "").strip().upper()
@@ -1936,7 +1935,7 @@ def proxy_cities(
             region_code,
             "",
         )
-        if provider not in {"P2", "P3"} or not country:
+        if provider not in {"P1", "P2", "P3"} or not country:
             raise ValueError("Unsupported proxy city request")
         if provider == "P2":
             account_key = p2_geo_account_key_from_config(
@@ -1954,8 +1953,9 @@ def proxy_cities(
             active=True,
         ).exists():
             raise ValueError("Unsupported provider region")
+        city_catalog_provider = "P3" if provider in {"P1", "P3"} else provider
         city_query = ProxyCityCatalog.objects.filter(
-            provider__code=provider,
+            provider__code=city_catalog_provider,
             provider__active=True,
             account_key=account_key,
             country_code=country,
@@ -1963,12 +1963,12 @@ def proxy_cities(
         )
         if region:
             regional_cities = city_query.filter(region_code=region)
-            # P3 publishes its selectable city catalog at country scope while
-            # region/state is a separate provider constraint.  Do not empty
-            # the City dropdown merely because those city records have no
-            # duplicate per-region rows.  P2 remains strict because its city
-            # catalog is account- and region-specific.
-            if provider == "P3" and not regional_cities.exists():
+            # P1/P3 use the shared selectable city catalog at country scope,
+            # while region/state is a separate provider constraint. Do not
+            # empty the City dropdown merely because those city records have
+            # no duplicate per-region rows. P2 remains strict because its
+            # city catalog is account- and region-specific.
+            if provider in {"P1", "P3"} and not regional_cities.exists():
                 pass
             else:
                 city_query = regional_cities
