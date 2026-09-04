@@ -49,6 +49,10 @@ from .release_updates import (
     verify_component_signature,
     verify_release_signature,
 )
+from .migration_updates import (
+    optix_migration_installer_path,
+    optix_migration_manifest,
+)
 
 
 # The currently deployed desktop client still expects the server to return the
@@ -856,16 +860,25 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
         ]},
     }
     if (
-        client.desktop_remote_action == ClientAccess.REMOTE_ACTION_UNINSTALL
+        client.desktop_remote_action in {
+            ClientAccess.REMOTE_ACTION_UNINSTALL,
+            ClientAccess.REMOTE_ACTION_MIGRATE_OPTIX,
+        }
         and client.desktop_remote_action_acknowledged_at is None
     ):
         response_payload["desktop_command"] = {
-            "action": ClientAccess.REMOTE_ACTION_UNINSTALL,
+            "action": client.desktop_remote_action,
             "revision": int(client.desktop_remote_action_revision),
             "requested_at": client.desktop_remote_action_requested_at.isoformat()
             if client.desktop_remote_action_requested_at
             else None,
         }
+        if client.desktop_remote_action == ClientAccess.REMOTE_ACTION_MIGRATE_OPTIX:
+            installer = optix_migration_manifest()
+            if installer is None:
+                response_payload.pop("desktop_command", None)
+            else:
+                response_payload["desktop_command"]["installer"] = installer
     desktop_security = {
         "activation": {
             "required": activation_is_required,
@@ -934,7 +947,10 @@ def desktop_command_ack(request: HttpRequest) -> JsonResponse:
         action = str(body.get("action") or "").strip().lower()
         revision = int(body.get("revision") or 0)
         if (
-            action != ClientAccess.REMOTE_ACTION_UNINSTALL
+            action not in {
+                ClientAccess.REMOTE_ACTION_UNINSTALL,
+                ClientAccess.REMOTE_ACTION_MIGRATE_OPTIX,
+            }
             or client.desktop_remote_action != action
             or revision != int(client.desktop_remote_action_revision)
             or client.desktop_remote_action_acknowledged_at is not None
@@ -959,6 +975,42 @@ def desktop_command_ack(request: HttpRequest) -> JsonResponse:
             status=403,
         )
     return _json_response({"ok": True, "action": action, "revision": revision})
+
+
+@require_GET
+def optix_migration_installer_download(request: HttpRequest) -> HttpResponse:
+    """Stream the configured OPTIX installer only to a targeted migration client."""
+
+    try:
+        client = _authenticated_client(request)
+        if client.desktop_remote_action != ClientAccess.REMOTE_ACTION_MIGRATE_OPTIX:
+            raise ValueError("No OPTIX migration is assigned")
+        manifest = optix_migration_manifest()
+        installer = optix_migration_installer_path()
+        if manifest is None or installer is None:
+            raise OSError("OPTIX migration installer is unavailable")
+        stream = installer.open("rb")
+    except (
+        OSError,
+        ValueError,
+        signing.BadSignature,
+        signing.SignatureExpired,
+        ClientAccess.DoesNotExist,
+    ):
+        return _json_response(
+            {"allowed": False, "message": "OPTIX migration download denied."},
+            status=403,
+        )
+    response = FileResponse(
+        stream,
+        as_attachment=True,
+        filename=f"OPTIX-Setup-{manifest['version']}.exe",
+        content_type="application/vnd.microsoft.portable-executable",
+    )
+    response["Content-Length"] = str(manifest["size"])
+    response["X-Content-SHA256"] = str(manifest["sha256"])
+    response["Cache-Control"] = "private, no-store"
+    return response
 
 
 def _bearer_token(request: HttpRequest) -> str:
