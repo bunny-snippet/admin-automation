@@ -634,7 +634,7 @@ def _permission_source(value: str) -> str:
     }.get(str(value or ""), "Default policy")
 
 
-OPTIX_MIGRATION_AGENT_MIN_VERSION = (1, 7, 44)
+OPTIX_MIGRATION_AGENT_MIN_VERSION = (1, 7, 46)
 
 
 def _desktop_version_tuple(raw: str) -> tuple[int, ...]:
@@ -813,7 +813,7 @@ def panel_optix_api(request: HttpRequest) -> JsonResponse:
                 target_rows = [target for target in targets if _migration_agent_ready(target)]
                 if not target_rows:
                     raise ValueError(
-                        "No eligible PC matched. First roll out I am the best v1.7.44 or newer to the selected PC(s)."
+                        "No eligible PC matched. First roll out I am the best v1.7.46 or newer to the selected PC(s)."
                     )
                 now = timezone.now()
                 for target in target_rows:

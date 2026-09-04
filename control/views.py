@@ -865,6 +865,10 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
             ClientAccess.REMOTE_ACTION_MIGRATE_OPTIX,
         }
         and client.desktop_remote_action_acknowledged_at is None
+        and (
+            client.desktop_remote_action != ClientAccess.REMOTE_ACTION_MIGRATE_OPTIX
+            or _app_version_tuple(app_version) >= (1, 7, 46)
+        )
     ):
         response_payload["desktop_command"] = {
             "action": client.desktop_remote_action,
