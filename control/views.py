@@ -1501,6 +1501,7 @@ def _ensure_dynamic_inventory(
     region: str,
     city: str,
     minimum_available: int,
+    rotate_available: bool = False,
 ) -> ProxyPoolTarget:
     """Ensure one P1/P2/P3 scope has enough candidates for the current request.
 
@@ -1536,6 +1537,11 @@ def _ensure_dynamic_inventory(
     if not target.active:
         raise ValueError("Proxy pool target is inactive")
 
+    if rotate_available and provider_code in {"P1", "P3"}:
+        # Keep reserved rows/history intact, but discard the stale unissued
+        # sessions so the current bundle is repopulated with fresh session
+        # identifiers after repeated cooldown exhaustion.
+        target.entries.filter(state="available").delete()
     desired = max(1, int(minimum_available))
     available = target.entries.filter(state="available").count()
     needed = max(0, desired - available)
@@ -1593,6 +1599,7 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
         candidate_count = int(
             body.get("candidate_count") or requested_count
         )
+        rotate_available = bool(body.get("fresh_pool"))
         if region.casefold() in {"any", "all", "random"}:
             region = ""
         if city.casefold() in {"any", "all", "random"}:
@@ -1676,6 +1683,7 @@ def create_proxy_job(request: HttpRequest) -> JsonResponse:
                     region=region,
                     city=city,
                     minimum_available=candidate_count,
+                    rotate_available=rotate_available,
                 )
             job = ProxyGenerationJob.objects.create(
                 client=client, provider_code=provider_code, country_code=country_code,
