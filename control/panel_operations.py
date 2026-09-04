@@ -953,33 +953,48 @@ def panel_releases_api(request: HttpRequest) -> JsonResponse:
             with transaction.atomic():
                 item = model.objects.select_for_update().get(pk=body.get("release_id"))
                 if action == "publish":
-                    if item.status != item.STATUS_DRAFT:
-                        raise ValueError("Only an uploaded Draft can be rolled out.")
+                    if item.status not in {item.STATUS_DRAFT, item.STATUS_PUBLISHED}:
+                        raise ValueError("Only a Draft or live rollout can receive targets.")
+                    extending = item.status == item.STATUS_PUBLISHED
                     channel = str(body.get("channel") or "").strip().lower()
                     if channel not in dict(item.CHANNEL_CHOICES):
                         raise ValueError("Choose Public or Testing channel.")
+                    if extending and channel != item.channel:
+                        raise ValueError(f"This live rollout already uses the {item.channel} channel.")
                     scope = str(body.get("scope") or "all").strip().lower()
-                    target_offices: list[str] = []
-                    target_devices: list[str] = []
+                    target_offices: list[str] = list(item.target_offices or []) if extending else []
+                    target_devices: list[str] = list(item.target_device_ids or []) if extending else []
                     if scope == "office":
                         office = _selected_office(body.get("office"), _visible_offices())
                         if not office:
                             raise ValueError("Choose an office for this rollout.")
-                        target_offices = [office]
+                        if office not in target_offices:
+                            target_offices.append(office)
                     elif scope == "device":
                         client = get_object_or_404(ClientAccess, pk=body.get("client_id"))
                         if not client.device_id:
                             raise ValueError("This PC has not reported a Device ID yet.")
-                        target_devices = [client.device_id]
+                        if client.device_id not in target_devices:
+                            target_devices.append(client.device_id)
                     elif scope != "all":
                         raise ValueError("Choose all PCs, one office or one PC.")
+                    else:
+                        target_offices = []
+                        target_devices = []
                     item.channel = channel
                     item.target_offices = target_offices
                     item.target_device_ids = target_devices
                     item.status = item.STATUS_PUBLISHED
                     item.published_at = timezone.now()
                     item.save()
-                    return panel_json({"ok": True, "message": f"{item.version} rollout is live on {channel}."})
+                    return panel_json({
+                        "ok": True,
+                        "message": (
+                            f"{item.version} rollout targets updated on {channel}."
+                            if extending
+                            else f"{item.version} rollout is live on {channel}."
+                        ),
+                    })
                 if action == "revoke":
                     if item.status != item.STATUS_PUBLISHED:
                         raise ValueError("Only a live rollout can be revoked.")

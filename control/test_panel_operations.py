@@ -5,6 +5,7 @@ import tempfile
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.files.base import ContentFile
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from cryptography.hazmat.primitives import serialization
@@ -18,6 +19,7 @@ from .models import (
     ClientAccessIP,
     ConfigBundle,
     DesktopOfficeAccessPolicy,
+    DesktopRelease,
     DesktopSecurityConfiguration,
     Provider,
     ProxyPoolEntry,
@@ -272,3 +274,40 @@ class OperationsPanelTests(TestCase):
         self.assertContains(response, 'data-route="releases"')
         self.assertNotContains(response, 'data-route="overview"')
         self.assertNotContains(response, "Domain activity")
+
+    def test_live_release_can_add_individual_targets_without_a_new_upload(self):
+        release = DesktopRelease(
+            channel=DesktopRelease.CHANNEL_PUBLIC,
+            version="1.7.44",
+            build_number=10745,
+            mode=DesktopRelease.MODE_SILENT,
+            target_offices=["__PENDING_ASSIGNMENT__"],
+            signature_b64="test-signature",
+        )
+        release.artifact.save("iatb-v1.7.44.exe", ContentFile(b"MZ-test"), save=True)
+        second = ClientAccess.objects.create(
+            name="IPLV system 02",
+            ipv4="198.51.100.12",
+            device_id="device-iplv-02",
+            office_name="IPLV",
+            system_number="02",
+            config_bundle=self.bundle,
+        )
+
+        with patch("control.release_updates.verify_release_signature"):
+            for target in (self.device, second):
+                response = self.post("control:panel-releases-api", {
+                    "action": "publish",
+                    "kind": "application",
+                    "release_id": release.pk,
+                    "channel": "public",
+                    "scope": "device",
+                    "client_id": target.pk,
+                })
+                self.assertEqual(response.status_code, 200, response.content)
+
+        release.refresh_from_db()
+        self.assertEqual(
+            release.target_device_ids,
+            [self.device.device_id, second.device_id],
+        )
