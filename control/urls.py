@@ -80,6 +80,11 @@ urlpatterns = [
         views.desktop_command_ack,
         name="desktop-command-ack",
     ),
+    path(
+        "api/v1/desktop-command/status/",
+        views.desktop_command_status,
+        name="desktop-command-status",
+    ),
     path("api/v1/internal/optix-proxy/", views.optix_proxy_bridge, name="optix-proxy-bridge"),
     path("api/v1/proxy-jobs/", views.create_proxy_job, name="proxy-job-create"),
     path("api/v1/proxy-jobs/<int:job_id>/", views.proxy_job_detail, name="proxy-job-detail"),

@@ -959,6 +959,11 @@ def desktop_command_ack(request: HttpRequest) -> JsonResponse:
         now = timezone.now()
         ClientAccess.objects.filter(pk=client.pk).update(
             desktop_remote_action_acknowledged_at=now,
+            desktop_remote_action_phase="completed",
+            desktop_remote_action_progress=100,
+            desktop_remote_action_status_message="OPTIX migration completed successfully.",
+            desktop_remote_action_error="",
+            desktop_remote_action_status_at=now,
             updated_at=now,
         )
     except (
@@ -975,6 +980,60 @@ def desktop_command_ack(request: HttpRequest) -> JsonResponse:
             status=403,
         )
     return _json_response({"ok": True, "action": action, "revision": revision})
+
+
+@csrf_exempt
+@require_POST
+def desktop_command_status(request: HttpRequest) -> JsonResponse:
+    """Record authenticated phase/progress telemetry for a pending migration."""
+
+    allowed_phases = {
+        "received", "downloading", "verified", "staged", "handoff",
+        "waiting_for_close", "stopping_legacy", "uninstalling", "installing",
+        "launching", "completed", "failed",
+    }
+    try:
+        client = _authenticated_client(request)
+        body = json.loads(request.body.decode("utf-8") or "{}")
+        action = str(body.get("action") or "").strip().lower()
+        revision = int(body.get("revision") or 0)
+        phase = str(body.get("phase") or "").strip().lower()
+        progress = int(body.get("progress") or 0)
+        message = str(body.get("message") or "").strip()[:500]
+        error = str(body.get("error") or "").strip()[:1500]
+        if (
+            action != ClientAccess.REMOTE_ACTION_MIGRATE_OPTIX
+            or client.desktop_remote_action != action
+            or revision != int(client.desktop_remote_action_revision)
+            or phase not in allowed_phases
+            or not 0 <= progress <= 100
+        ):
+            raise ValueError("Desktop command status is no longer valid")
+        now = timezone.now()
+        ClientAccess.objects.filter(pk=client.pk).update(
+            desktop_remote_action_phase=phase,
+            desktop_remote_action_progress=progress,
+            desktop_remote_action_status_message=message,
+            desktop_remote_action_error=error if phase == "failed" else "",
+            desktop_remote_action_status_at=now,
+            updated_at=now,
+        )
+    except (
+        ValueError,
+        TypeError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        signing.BadSignature,
+        signing.SignatureExpired,
+        ClientAccess.DoesNotExist,
+    ):
+        return _json_response(
+            {"ok": False, "message": "Desktop command status was denied."},
+            status=403,
+        )
+    return _json_response(
+        {"ok": True, "action": action, "revision": revision, "phase": phase}
+    )
 
 
 @require_GET

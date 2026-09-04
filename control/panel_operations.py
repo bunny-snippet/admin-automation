@@ -771,10 +771,18 @@ def panel_optix_api(request: HttpRequest) -> JsonResponse:
                 client.desktop_remote_action_revision += 1
                 client.desktop_remote_action_requested_at = timezone.now()
                 client.desktop_remote_action_acknowledged_at = None
+                client.desktop_remote_action_phase = "queued"
+                client.desktop_remote_action_progress = 0
+                client.desktop_remote_action_status_message = "Removal command is waiting for the PC."
+                client.desktop_remote_action_error = ""
+                client.desktop_remote_action_status_at = timezone.now()
                 client.desktop_remote_action_requested_by = request.user
                 client.save(update_fields=(
                     "desktop_remote_action", "desktop_remote_action_revision",
                     "desktop_remote_action_requested_at", "desktop_remote_action_acknowledged_at",
+                    "desktop_remote_action_phase", "desktop_remote_action_progress",
+                    "desktop_remote_action_status_message", "desktop_remote_action_error",
+                    "desktop_remote_action_status_at",
                     "desktop_remote_action_requested_by", "updated_at",
                 ))
                 return panel_json({
@@ -813,11 +821,19 @@ def panel_optix_api(request: HttpRequest) -> JsonResponse:
                     target.desktop_remote_action_revision += 1
                     target.desktop_remote_action_requested_at = now
                     target.desktop_remote_action_acknowledged_at = None
+                    target.desktop_remote_action_phase = "queued"
+                    target.desktop_remote_action_progress = 0
+                    target.desktop_remote_action_status_message = "Migration command is waiting for the PC."
+                    target.desktop_remote_action_error = ""
+                    target.desktop_remote_action_status_at = now
                     target.desktop_remote_action_requested_by = request.user
                     target.updated_at = now
                 ClientAccess.objects.bulk_update(target_rows, (
                     "desktop_remote_action", "desktop_remote_action_revision",
                     "desktop_remote_action_requested_at", "desktop_remote_action_acknowledged_at",
+                    "desktop_remote_action_phase", "desktop_remote_action_progress",
+                    "desktop_remote_action_status_message", "desktop_remote_action_error",
+                    "desktop_remote_action_status_at",
                     "desktop_remote_action_requested_by", "updated_at",
                 ))
                 return panel_json({
@@ -830,8 +846,16 @@ def panel_optix_api(request: HttpRequest) -> JsonResponse:
                 client.desktop_remote_action = ClientAccess.REMOTE_ACTION_NONE
                 client.desktop_remote_action_requested_at = None
                 client.desktop_remote_action_requested_by = None
+                client.desktop_remote_action_phase = ""
+                client.desktop_remote_action_progress = 0
+                client.desktop_remote_action_status_message = ""
+                client.desktop_remote_action_error = ""
+                client.desktop_remote_action_status_at = None
                 client.save(update_fields=(
                     "desktop_remote_action", "desktop_remote_action_requested_at",
+                    "desktop_remote_action_phase", "desktop_remote_action_progress",
+                    "desktop_remote_action_status_message", "desktop_remote_action_error",
+                    "desktop_remote_action_status_at",
                     "desktop_remote_action_requested_by", "updated_at",
                 ))
                 return panel_json({"ok": True, "message": "Pending desktop command cancelled."})
@@ -867,6 +891,11 @@ def panel_optix_api(request: HttpRequest) -> JsonResponse:
             "remote_action_revision": selected.desktop_remote_action_revision,
             "remote_action_requested_at": iso(selected.desktop_remote_action_requested_at),
             "remote_action_acknowledged_at": iso(selected.desktop_remote_action_acknowledged_at),
+            "remote_action_phase": selected.desktop_remote_action_phase,
+            "remote_action_progress": selected.desktop_remote_action_progress,
+            "remote_action_status_message": selected.desktop_remote_action_status_message,
+            "remote_action_error": selected.desktop_remote_action_error,
+            "remote_action_status_at": iso(selected.desktop_remote_action_status_at),
             "migration_agent_ready": _migration_agent_ready(selected),
         }
     release_channels = {row.release_channel for row in clients}
@@ -901,6 +930,11 @@ def panel_optix_api(request: HttpRequest) -> JsonResponse:
                 "product": _product_row(row),
                 "remote_action": row.desktop_remote_action,
                 "remote_acknowledged": row.desktop_remote_action_acknowledged_at is not None,
+                "remote_action_phase": row.desktop_remote_action_phase,
+                "remote_action_progress": row.desktop_remote_action_progress,
+                "remote_action_status_message": row.desktop_remote_action_status_message,
+                "remote_action_error": row.desktop_remote_action_error,
+                "remote_action_status_at": iso(row.desktop_remote_action_status_at),
                 "migration_agent_ready": _migration_agent_ready(row),
                 "last_seen": iso(row.last_seen_at),
             }
