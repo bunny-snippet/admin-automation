@@ -216,10 +216,10 @@ class OperationsPanelTests(TestCase):
             system_number="02",
             config_bundle=self.bundle,
             desktop_client_product=ClientAccess.DESKTOP_PRODUCT_LEGACY,
-            desktop_client_version="1.7.44",
+            desktop_client_version="1.7.46",
         )
         self.device.desktop_client_product = ClientAccess.DESKTOP_PRODUCT_LEGACY
-        self.device.desktop_client_version = "1.7.44"
+        self.device.desktop_client_version = "1.7.46"
         self.device.save(update_fields=("desktop_client_product", "desktop_client_version", "updated_at"))
         with tempfile.TemporaryDirectory() as directory:
             installer = Path(directory) / "OPTIX-Setup.exe"
