@@ -226,6 +226,11 @@ class ClientAccess(models.Model):
     desktop_remote_action_revision = models.PositiveBigIntegerField(default=0)
     desktop_remote_action_requested_at = models.DateTimeField(blank=True, null=True)
     desktop_remote_action_acknowledged_at = models.DateTimeField(blank=True, null=True)
+    desktop_remote_action_phase = models.CharField(max_length=40, blank=True, default="")
+    desktop_remote_action_progress = models.PositiveSmallIntegerField(default=0)
+    desktop_remote_action_status_message = models.TextField(blank=True, default="")
+    desktop_remote_action_error = models.TextField(blank=True, default="")
+    desktop_remote_action_status_at = models.DateTimeField(blank=True, null=True)
     desktop_remote_action_requested_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
