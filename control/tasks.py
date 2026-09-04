@@ -28,6 +28,7 @@ from .models import (
     ProxyRegionCatalog,
 )
 from .p3_routing import p3_subdivision_selector
+from .proxy_expansion import location_stock_settings, proxy_location_specs
 from .proxy_jobs import fulfill_waiting_jobs, get_or_create_pool_target, proxy_fingerprint
 
 
@@ -402,6 +403,97 @@ def queue_refill_proxy_pool(target_id: int) -> bool:
         logger.warning("Could not queue proxy refill for target %s: %s", target_id, exc)
         return False
     return True
+
+
+@shared_task(bind=True, autoretry_for=(), max_retries=0)
+def expand_proxy_pool_scope(
+    self,
+    bundle_ids: list[int],
+    provider_code: str,
+    country_code: str,
+    region_code: str = "",
+    city_name: str = "",
+    target_count: int = DEFAULT_POOL_TARGET,
+    replenish_below: int = DEFAULT_POOL_THRESHOLD,
+) -> dict[str, int]:
+    """Create and queue every concrete pool represented by panel Any values."""
+    provider = str(provider_code or "").strip().upper()
+    country = str(country_code or "").strip().upper()
+    specs = proxy_location_specs(provider, country, region_code, city_name)
+    bundles = list(
+        ConfigBundle.objects.filter(pk__in=bundle_ids, active=True).order_by("pk")
+    )
+    configured = [
+        bundle
+        for bundle in bundles
+        if provider_is_configured(provider, bundle.get_payload())
+    ]
+    desired = []
+    for bundle in configured:
+        for spec in specs:
+            stock_target, stock_threshold = location_stock_settings(
+                spec,
+                int(target_count),
+                int(replenish_below),
+            )
+            desired.append(
+                ProxyPoolTarget(
+                    config_bundle=bundle,
+                    provider_code=provider,
+                    country_code=country,
+                    region=spec.region,
+                    city=spec.city,
+                    target_count=stock_target,
+                    replenish_below=stock_threshold,
+                    active=True,
+                )
+            )
+    ProxyPoolTarget.objects.bulk_create(
+        desired,
+        batch_size=1000,
+        ignore_conflicts=True,
+    )
+    locations = {(spec.region, spec.city): spec for spec in specs}
+    targets = list(
+        ProxyPoolTarget.objects.filter(
+            config_bundle__in=configured,
+            provider_code=provider,
+            country_code=country,
+        ).select_related("config_bundle")
+    )
+    selected = [
+        target
+        for target in targets
+        if (target.region, target.city) in locations
+    ]
+    changed = []
+    changed_at = timezone.now()
+    for target in selected:
+        spec = locations[(target.region, target.city)]
+        stock_target, stock_threshold = location_stock_settings(
+            spec,
+            int(target_count),
+            int(replenish_below),
+        )
+        target.target_count = max(target.target_count, stock_target)
+        target.replenish_below = max(target.replenish_below, stock_threshold)
+        target.active = True
+        target.updated_at = changed_at
+        changed.append(target)
+    if changed:
+        ProxyPoolTarget.objects.bulk_update(
+            changed,
+            ("target_count", "replenish_below", "active", "updated_at"),
+            batch_size=1000,
+        )
+    queued = sum(int(queue_refill_proxy_pool(target.pk)) for target in selected)
+    return {
+        "bundles": len(configured),
+        "missing_credentials": len(bundles) - len(configured),
+        "locations": len(specs),
+        "targets": len(selected),
+        "queued": queued,
+    }
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60)

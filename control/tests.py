@@ -49,6 +49,11 @@ from .release_updates import (
 )
 from .management.commands.prefill_p2_geo_pools import _sync_city_catalog
 from .p3_routing import p3_subdivision_selector
+from .proxy_expansion import (
+    EXPANDED_CITY_TARGET,
+    location_stock_settings,
+    proxy_location_specs,
+)
 from .proxy_jobs import _repair_legacy_p3_region_proxy, reserve_pool_proxies
 from .tasks import (
     _generate, ensure_pool_targets, provider_is_configured, queue_refill_proxy_pool,
@@ -185,6 +190,59 @@ class P3SubdivisionRoutingTests(SimpleTestCase):
         repaired = _repair_legacy_p3_region_proxy(old, "IE", "MH")
         username = unquote(urlsplit(repaired).username or "")
         self.assertIn("-subdivision-MH,L-session-", username)
+
+
+class ProxyExpansionTests(TestCase):
+    def setUp(self):
+        self.p1 = Provider.objects.create(
+            code="P1", display_name="P1", display_order=1
+        )
+        self.p3 = Provider.objects.create(
+            code="P3", display_name="P3", display_order=3
+        )
+        for provider in (self.p1, self.p3):
+            ProxyRegionCatalog.objects.create(
+                provider=provider,
+                country_code="AU",
+                region_code="NSW",
+                region_name="New South Wales",
+            )
+            ProxyRegionCatalog.objects.create(
+                provider=provider,
+                country_code="AU",
+                region_code="TAS",
+                region_name="Tasmania",
+            )
+        for city in ("Hobart", "Sydney"):
+            ProxyCityCatalog.objects.create(
+                provider=self.p3,
+                account_key="p3-global-v1",
+                country_code="AU",
+                region_code="",
+                city_name=city,
+            )
+
+    def test_country_any_expands_country_regions_and_all_cities(self):
+        for provider in ("P1", "P3"):
+            specs = proxy_location_specs(provider, "AU", "", "")
+            locations = {(row.region, row.city, row.level) for row in specs}
+            self.assertEqual(len(locations), 5)
+            self.assertIn(("", "", "country"), locations)
+            self.assertIn(("NSW", "", "region"), locations)
+            self.assertIn(("TAS", "", "region"), locations)
+            self.assertIn(("", "Hobart", "city"), locations)
+            self.assertIn(("", "Sydney", "city"), locations)
+
+    def test_expanded_city_uses_safe_stock_level(self):
+        city = next(
+            row
+            for row in proxy_location_specs("P3", "AU", "", "")
+            if row.city == "Hobart"
+        )
+        self.assertEqual(
+            location_stock_settings(city, 1000, 200),
+            (EXPANDED_CITY_TARGET, 8),
+        )
 
 
 @override_settings(
@@ -1263,7 +1321,7 @@ class ControlApiTests(TestCase):
                 "country": "GB",
                 "city": "London",
                 "count": 1,
-                "candidate_count": 50,
+                "candidate_count": 100,
             }),
             content_type="application/json",
             HTTP_AUTHORIZATION=f"Bearer {token}",
@@ -1274,8 +1332,8 @@ class ControlApiTests(TestCase):
         self.assertEqual(response.status_code, 201)
         self.assertTrue(response.json()["allowed"])
         job = response.json()["job"]
-        self.assertEqual(job["candidate_count"], 40)
-        self.assertEqual(job["ready_count"], 40)
+        self.assertEqual(job["candidate_count"], 100)
+        self.assertEqual(job["ready_count"], 100)
         self.assertEqual(job["status"], "ready")
         stored = ProxyGenerationJob.objects.get(pk=job["id"])
         self.assertEqual(stored.region, "")
@@ -1289,7 +1347,7 @@ class ControlApiTests(TestCase):
         )
         self.assertEqual(target.target_count, 40)
         self.assertEqual(target.replenish_below, 8)
-        self.assertEqual(target.entries.filter(state="reserved").count(), 40)
+        self.assertEqual(target.entries.filter(state="reserved").count(), 100)
 
     def test_p2_proxy_job_rejects_city_outside_prefilled_catalog(self):
         p2 = Provider.objects.create(code="P2", display_name="P2", display_order=2)
@@ -1357,7 +1415,7 @@ class ControlApiTests(TestCase):
                 "country": "GB",
                 "city": "London",
                 "count": 1,
-                "candidate_count": 50,
+                "candidate_count": 100,
             }),
             content_type="application/json",
             HTTP_AUTHORIZATION=f"Bearer {token}",
@@ -1367,8 +1425,8 @@ class ControlApiTests(TestCase):
 
         self.assertEqual(response.status_code, 201)
         job = response.json()["job"]
-        self.assertEqual(job["candidate_count"], 40)
-        self.assertEqual(job["ready_count"], 40)
+        self.assertEqual(job["candidate_count"], 100)
+        self.assertEqual(job["ready_count"], 100)
         self.assertEqual(job["status"], "ready")
         second = self.client.post(
             reverse("control:proxy-job-create"),
@@ -1377,7 +1435,7 @@ class ControlApiTests(TestCase):
                 "country": "GB",
                 "city": "London",
                 "count": 1,
-                "candidate_count": 50,
+                "candidate_count": 100,
             }),
             content_type="application/json",
             HTTP_AUTHORIZATION=f"Bearer {token}",
@@ -1386,8 +1444,8 @@ class ControlApiTests(TestCase):
         )
         self.assertEqual(second.status_code, 201)
         second_job = second.json()["job"]
-        self.assertEqual(second_job["candidate_count"], 40)
-        self.assertEqual(second_job["ready_count"], 40)
+        self.assertEqual(second_job["candidate_count"], 100)
+        self.assertEqual(second_job["ready_count"], 100)
         self.assertEqual(second_job["status"], "ready")
         target = ProxyPoolTarget.objects.get(
             config_bundle=self.bundle,
@@ -1398,7 +1456,7 @@ class ControlApiTests(TestCase):
         )
         self.assertEqual(target.target_count, 40)
         self.assertEqual(target.replenish_below, 8)
-        self.assertEqual(target.entries.filter(state="reserved").count(), 80)
+        self.assertEqual(target.entries.filter(state="reserved").count(), 200)
 
     def test_p2_state_city_catalog_is_independent_of_bundle_inventory(self):
         p2 = Provider.objects.create(code="P2", display_name="P2", display_order=2)
