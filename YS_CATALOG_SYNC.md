@@ -51,17 +51,47 @@ when scheduled sync is disabled; failure retains prior valid data and exits nonz
 Missing/invalid upstream credentials may block browser metadata independently of
 the unauthenticated common catalog.
 
-Configure a dedicated worker using the existing private Redis broker:
+## Standalone scheduling on the current Warrior deployment
+
+Use the existing **bunny** account and `.venv/bin/python`. No new Redis, Celery
+worker or beat is required. Do not start a full beat merely for this feature: it
+would also schedule unrelated proxy maintenance.
 
 ```bash
-./.venv/bin/celery -A controlserver worker -Q catalog-sync --concurrency=1 --loglevel=INFO --hostname='warrior-catalog@%h'
+cd /home/automation-exchange-ip/htdocs/warrior_control_server
+.venv/bin/python deploy/install_ys_catalog_cron.py
+.venv/bin/python deploy/install_ys_catalog_cron.py --install
+.venv/bin/python deploy/install_ys_catalog_cron.py
 ```
 
-Restart the existing Celery beat scheduler to load the new schedule; run exactly
-one beat for this deployment, not a second scheduler. If no beat exists, configure
-`./.venv/bin/celery -A controlserver beat --loglevel=INFO` in the process manager.
-Web-only deployment is insufficient. Catalog-worker startup does not enqueue proxy
-generation; existing `proxy-jobs` worker startup behavior is preserved.
+Run these commands as bunny, never root. The default command is a read-only
+check. `--install` privately backs up the full prior user crontab in
+`tmp/ys-catalog-crontab-before-*.txt`, preserves every unrelated entry, updates
+only the uniquely marked catalog block, and verifies the result. It refuses
+ambiguous markers or a changed crontab rather than overwriting them. Do not
+replace the whole user crontab with the small fragment. Backups may contain
+private configuration; keep them local, mode 0600, and never commit them.
+
+The installed minute-level shell guard checks `Asia/Kolkata`; it returns
+immediately except at **08:00, 12:00, 16:00 and 20:00 IST**. Django therefore
+runs only four times daily, regardless of the host cron timezone. No `CRON_TZ`
+support is assumed. The equivalent UTC slots are **02:30, 06:30, 10:30, 14:30**,
+but a direct `30 2,6,10,14 * * *` entry is safe only after confirming the cron
+daemon uses UTC. Do not install both forms.
+
+The runner uses a per-repo `flock`, a 720-second timeout and
+`sync_ys_catalogs --scheduled`. Scheduled mode respects
+`YS_CATALOG_SYNC_ENABLED=false` without requests or DB writes; normal manual
+mode retains its explicit force behavior. The private log
+`tmp/ys-catalog-sync.log` contains one short UTC timestamp/result/exit-code line
+per attempted scheduled run. Raw Django output is suppressed; use admin or
+`sync_ys_catalogs --status` for sanitized resource errors. A timeout/failure exits
+nonzero; a live lock skips safely. Log volume is at most four normal lines/day;
+use existing log retention controls if required.
+
+No scheduled catch-up runs occur after downtime. Do not enable a second catalog
+schedule through Celery at the same time. Existing proxy workers, cache,
+office/IP policy and profile execution are untouched.
 
 ## Private client delivery
 

@@ -1,0 +1,5 @@
+# Add to bunny's existing user crontab; preserve every unrelated entry.
+# Cheap minute guard is timezone-independent; Django runs only 08/12/16/20 IST.
+# BEGIN managed-warrior-ys-catalog-sync
+* * * * * /bin/bash /home/automation-exchange-ip/htdocs/warrior_control_server/deploy/run_ys_catalog_sync.sh --cron-guard >> /home/automation-exchange-ip/htdocs/warrior_control_server/tmp/ys-catalog-sync.log 2>&1
+# END managed-warrior-ys-catalog-sync
