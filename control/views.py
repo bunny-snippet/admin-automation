@@ -33,6 +33,7 @@ from .models import (
     ProxyPoolEntry, ProxyPoolTarget, ProxyReservation, ProxyRegionCatalog,
 )
 from .p3_geo_catalog import P3_GEO_ACCOUNT_KEY, p3_city_name
+from .browser_catalog import current_catalog
 from .geo_catalog import p2_geo_account_key_from_config
 from .exit_ip_cooldown import (
     check_exit_ip,
@@ -802,6 +803,10 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
         ),
         "activation_enforced": activation_is_required,
     }
+    # Keep legacy tokens unchanged; only explicitly identified OPTIX sessions may
+    # consume the new private metadata endpoint (never version inference alone).
+    if client_product.strip().casefold() == ClientAccess.DESKTOP_PRODUCT_OPTIX:
+        token_payload["browser_catalog_product"] = ClientAccess.DESKTOP_PRODUCT_OPTIX
     token = signing.dumps(token_payload, salt=TOKEN_SALT, compress=True)
     detected_product = _desktop_product(client_product, app_version, activation_key)
     detected_activation_revision = 0
@@ -924,6 +929,11 @@ def bootstrap(request: HttpRequest) -> JsonResponse:
         "revision": int(runtime_config.revision) if runtime_config is not None else 0,
         "values": runtime_values,
     }
+    # Explicit OPTIX clients only: do not extend legacy/version-inferred bootstraps.
+    if client_product.strip().casefold() == ClientAccess.DESKTOP_PRODUCT_OPTIX:
+        catalog = current_catalog(descriptor=True)
+        if catalog is not None:
+            response_payload["browser_catalog_sync"] = catalog
     if update_protocol >= 1:
         # ClientAccess remains authoritative, and a mismatched executable gets
         # no manifest instead of a manifest it would reject for another channel.
@@ -1219,6 +1229,27 @@ def _authenticated_client(request: HttpRequest) -> ClientAccess:
     if token_payload.get("config_version") != client.config_bundle.version:
         raise signing.BadSignature("Configuration changed")
     return client
+
+
+@require_GET
+def browser_catalog(request: HttpRequest) -> JsonResponse:
+    try:
+        client = _authenticated_client(request)
+        if client.desktop_client_product != ClientAccess.DESKTOP_PRODUCT_OPTIX:
+            raise ValueError("OPTIX client required")
+        token_payload = signing.loads(_bearer_token(request), salt=TOKEN_SALT,
+                                      max_age=settings.BOOTSTRAP_TOKEN_MAX_AGE)
+        if token_payload.get("browser_catalog_product") != ClientAccess.DESKTOP_PRODUCT_OPTIX:
+            raise ValueError("Explicit OPTIX bootstrap required")
+    except (ValueError, signing.BadSignature, signing.SignatureExpired, ClientAccess.DoesNotExist):
+        return _json_response({"allowed": False, "message": "Access denied."}, status=403)
+    payload = current_catalog()
+    if payload is None:
+        return _json_response({"message": "No validated browser catalog is available yet."}, status=503)
+    response = _json_response(payload)
+    response["Cache-Control"] = "private, no-store"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 def _proxy_protocol(value: str) -> str:
