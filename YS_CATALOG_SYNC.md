@@ -1,8 +1,24 @@
 # Warrior: OPTIX-only YS catalog sync
 
-This source port adds metadata delivery for updated OPTIX clients only. Deploying
-the server does not install new client code. Legacy **I am the best** clients and
-their existing proxy, office, IP, activation and assignment behavior are unchanged.
+This deployment delivers metadata to updated OPTIX clients only. Legacy **I am
+the best** clients and their existing proxy, office, IP, activation and assignment
+behavior are unchanged.
+
+## Deployment status — 2026-09-06
+
+Both Warrior/OPTIX and Dollar server deployments and their independent scheduled
+metadata refreshes are live. Each has imported **19 common catalogs and 6 browser
+version metadata rows**. Testing-channel component release **202609060101** is
+published.
+
+Dollar **0.2.0** supports the component bridge. Existing OPTIX **1.6.1** needs the
+one-time **1.6.2** wrapper update to consume these components; that optional
+installer rollout remains pending. Final PC activation has not been confirmed.
+Server deployment or component publication is not proof of activation on a PC.
+
+Catalog refreshes never automatically download or install browser binaries.
+Private deployment backups and component-upload staging directories are excluded
+from Git; existing private runtime data stays outside version control.
 
 ## Scope and safeguards
 
@@ -26,7 +42,7 @@ A Windows-hosted binary is not evidence that its fingerprint target is desktop;
 Android-emulating builds must remain separate. This job never downloads, installs
 or executes binaries, changes the curated runtime policy, or signs releases.
 
-## Deployment
+## Deployment reference
 
 Set only in this Warrior server's private environment:
 
