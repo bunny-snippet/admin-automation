@@ -52,16 +52,32 @@ def _client(identity: object) -> ClientAccess | None:
     office = str(identity.get("office_name") or "").strip()
     system = str(identity.get("system_number") or "").strip()
     device_id = str(identity.get("device_id") or "").strip()
+
+    # Device ID is the durable cross-server identity. Dollar and Warrior may
+    # use different display/system labels for the same PC, and those labels can
+    # be edited independently. Requiring all three values caused an otherwise
+    # approved PC to lose proxy access even though both servers had the same
+    # stable Device ID.
+    if device_id:
+        matched = (
+            ClientAccess.objects.filter(active=True, device_id=device_id)
+            .select_related("config_bundle")
+            .order_by("pk")
+            .first()
+        )
+        if matched is not None:
+            return matched
+        # Never fall back to a mutable office/system label when the caller
+        # supplied an unknown Device ID.
+        return None
+
     if not office or not system:
         return None
-    rows = ClientAccess.objects.filter(
+    return ClientAccess.objects.filter(
         active=True,
         office_name__iexact=office,
         system_number=system,
-    )
-    if device_id:
-        rows = rows.filter(device_id=device_id)
-    return rows.select_related("config_bundle").order_by("pk").first()
+    ).select_related("config_bundle").order_by("pk").first()
 
 
 def _inner(method: str, path: str, body: dict, client: ClientAccess) -> HttpRequest:
