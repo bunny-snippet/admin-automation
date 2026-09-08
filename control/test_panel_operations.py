@@ -273,7 +273,8 @@ class OperationsPanelTests(TestCase):
         self.assertContains(response, 'data-route="optix"')
         self.assertContains(response, 'data-route="releases"')
         self.assertNotContains(response, 'data-route="overview"')
-        self.assertNotContains(response, "Domain activity")
+        self.assertContains(response, 'data-route="audit"')
+        self.assertContains(response, 'data-route="domains"')
 
     def test_live_release_can_add_individual_targets_without_a_new_upload(self):
         release = DesktopRelease(

@@ -48,7 +48,7 @@ class FocusedOperationsPanelTests(TestCase):
         self.assertContains(response, 'data-route="optix"')
         self.assertContains(response, "OPTIX Control")
         self.assertNotContains(response, "Suspicious activity")
-        self.assertNotContains(response, "Domain activity")
+        self.assertContains(response, 'data-route="domains"')
 
     def test_new_optix_resources_are_available(self):
         for resource in (
