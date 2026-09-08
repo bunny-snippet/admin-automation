@@ -42,6 +42,8 @@ def _verified(request: HttpRequest) -> bool:
     if abs(int(time.time()) - timestamp) > MAX_SKEW_SECONDS:
         return False
     supplied = str(request.headers.get("X-OPTIX-Signature", "")).strip().lower()
+    if len(supplied) != 64 or any(char not in "0123456789abcdef" for char in supplied):
+        return False
     expected = hmac.new(secret, f"{timestamp}\n".encode("ascii") + request.body, hashlib.sha256).hexdigest()
     return bool(supplied) and hmac.compare_digest(supplied, expected)
 
@@ -91,6 +93,48 @@ def _inner(method: str, path: str, body: dict, client: ClientAccess) -> HttpRequ
     return request
 
 
+def _cooldown_policy(values: object) -> JsonResponse:
+    """An administrative action authorized only by the verified server HMAC."""
+    if not isinstance(values, dict):
+        return _denied(400)
+    operation = values.get("operation")
+    actor = values.get("actor")
+    if (
+        operation not in ("get", "set")
+        or not isinstance(actor, str)
+        or len(actor) > 200
+        or any(ord(char) < 32 for char in actor)
+    ):
+        return _denied(400)
+    allowed_fields = {"operation", "actor"}
+    if operation == "set":
+        allowed_fields |= {"enabled", "expected_revision"}
+        if (
+            type(values.get("enabled")) is not bool
+            or type(values.get("expected_revision")) is not int
+            or values["expected_revision"] < 0
+        ):
+            return _denied(400)
+    if set(values) - allowed_fields:
+        return _denied(400)
+    from .exit_ip_cooldown import cooldown_policy_payload, set_cooldown_policy
+
+    if operation == "get":
+        policy = cooldown_policy_payload()
+    else:
+        try:
+            policy = set_cooldown_policy(
+                values["enabled"], actor=actor.strip(),
+                expected_revision=values["expected_revision"],
+            )
+        except ValueError:
+            return JsonResponse(
+                {"ok": False, "message": "Cooldown policy changed or was rejected. Refresh and retry."},
+                status=409,
+            )
+    return JsonResponse({"ok": True, "policy": policy})
+
+
 @csrf_exempt
 @require_POST
 def proxy_bridge(request: HttpRequest) -> JsonResponse:
@@ -101,6 +145,10 @@ def proxy_bridge(request: HttpRequest) -> JsonResponse:
         if not isinstance(payload, dict):
             raise ValueError
         action = str(payload.get("action") or "").strip().lower()
+        if action == "cooldown-policy":
+            # No desktop identity is needed or sufficient for administrative
+            # policy access. The HMAC above is mandatory even for a read.
+            return _cooldown_policy(payload.get("request"))
         client = _client(payload.get("client"))
         if client is None:
             return _denied()

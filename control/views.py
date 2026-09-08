@@ -1202,6 +1202,7 @@ def _authenticated_client(request: HttpRequest) -> ClientAccess:
     # cooldown code as the desktop API.
     trusted_client = getattr(request, "_optix_trusted_client", None)
     if isinstance(trusted_client, ClientAccess) and trusted_client.active:
+        request._optix_cooldown_policy = bool(getattr(request, "_optix_bridge_request", False))
         return trusted_client
     """Validate the short-lived, IP and device-bound bootstrap token."""
     if settings.TRUST_APP_REPORTED_IPV4:
@@ -1228,6 +1229,12 @@ def _authenticated_client(request: HttpRequest) -> ClientAccess:
     client = client_query.get()
     if token_payload.get("config_version") != client.config_bundle.version:
         raise signing.BadSignature("Configuration changed")
+    # Only signed, explicit Electron identity (or the authenticated private
+    # bridge above) may use its policy. Do not infer it from mutable client
+    # inventory metadata or request headers: legacy apps keep enforcement ON.
+    request._optix_cooldown_policy = (
+        token_payload.get("browser_catalog_product") == ClientAccess.DESKTOP_PRODUCT_OPTIX
+    )
     return client
 
 
@@ -2007,8 +2014,10 @@ def proxy_exit_ip_claim(request: HttpRequest) -> JsonResponse:
             {"allowed": False, "message": "Access denied."}, status=403
         )
 
+    apply_global_policy = bool(getattr(request, "_optix_cooldown_policy", False))
     if action == "check":
-        checked = check_exit_ip(exit_ip=exit_ip, reservation=reservation)
+        checked = check_exit_ip(exit_ip=exit_ip, reservation=reservation,
+            apply_global_policy=apply_global_policy)
         row = checked.cooldown
         payload = {
             "allowed": True,
@@ -2017,6 +2026,7 @@ def proxy_exit_ip_claim(request: HttpRequest) -> JsonResponse:
             "duplicate": checked.duplicate,
             "idempotent": False,
             "exit_ip": exit_ip,
+            "cooldown_enabled": checked.cooldown_enabled,
             "cooldown_seconds": cooldown_seconds(),
             "retry_after_seconds": 0,
         }
@@ -2035,6 +2045,8 @@ def proxy_exit_ip_claim(request: HttpRequest) -> JsonResponse:
                     ),
                 }
             )
+        if not checked.cooldown_enabled:
+            payload["retry_after_seconds"] = 0
         if checked.duplicate:
             payload["reason"] = "exit_ip_cooldown"
         return _json_response(payload)
@@ -2046,6 +2058,7 @@ def proxy_exit_ip_claim(request: HttpRequest) -> JsonResponse:
         job=job,
         reservation=reservation,
         fraud_score=fraud_score,
+        apply_global_policy=apply_global_policy,
     )
     row = result.cooldown
     now = timezone.now()
@@ -2063,7 +2076,8 @@ def proxy_exit_ip_claim(request: HttpRequest) -> JsonResponse:
         "claimed_at": row.claimed_at.isoformat(),
         "available_after": row.available_after.isoformat(),
         "cooldown_seconds": cooldown_seconds(),
-        "retry_after_seconds": retry_after_seconds,
+        "cooldown_enabled": result.cooldown_enabled,
+        "retry_after_seconds": retry_after_seconds if result.cooldown_enabled else 0,
     }
     if not result.claimed:
         payload["reason"] = "exit_ip_cooldown"

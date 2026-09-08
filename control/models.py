@@ -1498,6 +1498,23 @@ class ProxyReservation(models.Model):
         return decrypt_text(self.proxy_ciphertext) if self.proxy_ciphertext else ""
 
 
+class ProxyCooldownPolicy(models.Model):
+    """One global enforcement switch; disabling it never erases IP history."""
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    enabled = models.BooleanField(default=True)
+    revision = models.PositiveBigIntegerField(default=0)
+    updated_at = models.DateTimeField(blank=True, null=True)
+    updated_by = models.CharField(max_length=150, blank=True, default="")
+
+    class Meta:
+        verbose_name = "Global proxy cooldown policy"
+        verbose_name_plural = "Global proxy cooldown policy"
+        constraints = [
+            models.CheckConstraint(condition=models.Q(pk=1), name="proxy_cooldown_policy_singleton"),
+        ]
+
+
 class ProxyExitIPCooldown(models.Model):
     """Last globally accepted use of one normalized proxy exit IP."""
 

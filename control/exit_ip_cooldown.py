@@ -11,6 +11,7 @@ from django.utils import timezone
 
 from .models import (
     ClientAccess,
+    ProxyCooldownPolicy,
     ProxyExitIPCooldown,
     ProxyGenerationJob,
     ProxyPoolEntry,
@@ -23,12 +24,50 @@ class ExitIPClaimResult:
     cooldown: ProxyExitIPCooldown
     claimed: bool
     idempotent: bool = False
+    cooldown_enabled: bool = True
 
 
 @dataclass(frozen=True)
 class ExitIPCheckResult:
     cooldown: ProxyExitIPCooldown | None
     duplicate: bool
+    cooldown_enabled: bool = True
+
+
+def _policy_payload(policy: ProxyCooldownPolicy | None) -> dict:
+    return {
+        "enabled": policy.enabled if policy is not None else True,
+        "cooldown_hours": 25,
+        "updated_at": policy.updated_at.isoformat() if policy is not None and policy.updated_at else None,
+        "revision": policy.revision if policy is not None else 0,
+    }
+
+
+def cooldown_policy_payload() -> dict:
+    """Read the authoritative policy, without a process-local or TTL cache."""
+    return _policy_payload(ProxyCooldownPolicy.objects.filter(pk=1).first())
+
+
+def set_cooldown_policy(
+    enabled: bool, *, actor: str = "", expected_revision: int | None = None
+) -> dict:
+    """Serialize audited changes and reject stale administrative writes."""
+    if type(enabled) is not bool:
+        raise ValueError("Cooldown enabled must be a boolean.")
+    if expected_revision is not None and (
+        type(expected_revision) is not int or expected_revision < 0
+    ):
+        raise ValueError("Invalid cooldown policy revision.")
+    with transaction.atomic():
+        policy, _ = ProxyCooldownPolicy.objects.select_for_update().get_or_create(pk=1)
+        if expected_revision is not None and policy.revision != expected_revision:
+            raise ValueError("Cooldown policy changed; reload before saving.")
+        policy.enabled = enabled
+        policy.revision += 1
+        policy.updated_at = timezone.now()
+        policy.updated_by = str(actor or "").strip()[:150]
+        policy.save(update_fields=("enabled", "revision", "updated_at", "updated_by"))
+        return _policy_payload(policy)
 
 
 def normalize_exit_ip(value: object) -> str:
@@ -66,21 +105,24 @@ def check_exit_ip(
     *,
     exit_ip: object,
     reservation: ProxyReservation | None = None,
+    apply_global_policy: bool = True,
     now=None,
 ) -> ExitIPCheckResult:
     """Non-mutating early check; the later atomic claim remains authoritative."""
     normalized_ip = normalize_exit_ip(exit_ip)
     checked_at = now or timezone.now()
+    enabled = not apply_global_policy or cooldown_policy_payload()["enabled"]
     cooldown = ProxyExitIPCooldown.objects.filter(exit_ip=normalized_ip).first()
     duplicate = bool(
-        cooldown is not None
+        enabled
+        and cooldown is not None
         and cooldown.available_after > checked_at
         and (
             reservation is None
             or cooldown.reservation_id != reservation.pk
         )
     )
-    return ExitIPCheckResult(cooldown=cooldown, duplicate=duplicate)
+    return ExitIPCheckResult(cooldown=cooldown, duplicate=duplicate, cooldown_enabled=enabled)
 
 
 def claim_exit_ip(
@@ -91,6 +133,7 @@ def claim_exit_ip(
     job: ProxyGenerationJob | None = None,
     reservation: ProxyReservation | None = None,
     fraud_score: int | None = None,
+    apply_global_policy: bool = True,
     now=None,
 ) -> ExitIPClaimResult:
     """Atomically claim one exit IP across all providers and clients.
@@ -109,6 +152,7 @@ def claim_exit_ip(
     available_after = claimed_at + timedelta(seconds=cooldown_seconds())
 
     with transaction.atomic():
+        enabled = not apply_global_policy or cooldown_policy_payload()["enabled"]
         cooldown = (
             ProxyExitIPCooldown.objects.select_for_update()
             .filter(exit_ip=normalized_ip)
@@ -143,7 +187,7 @@ def claim_exit_ip(
                 fraud_score=fraud_score,
                 tested_at=claimed_at,
             )
-            return ExitIPClaimResult(cooldown=cooldown, claimed=True)
+            return ExitIPClaimResult(cooldown=cooldown, claimed=True, cooldown_enabled=enabled)
 
         if (
             reservation is not None
@@ -165,9 +209,10 @@ def claim_exit_ip(
                 cooldown=cooldown,
                 claimed=True,
                 idempotent=True,
+                cooldown_enabled=enabled,
             )
 
-        if cooldown.available_after > claimed_at:
+        if enabled and cooldown.available_after > claimed_at:
             ProxyExitIPCooldown.objects.filter(pk=cooldown.pk).update(
                 duplicate_attempts=F("duplicate_attempts") + 1,
                 last_duplicate_at=claimed_at,
@@ -182,7 +227,7 @@ def claim_exit_ip(
                 fraud_score=fraud_score,
                 tested_at=claimed_at,
             )
-            return ExitIPClaimResult(cooldown=cooldown, claimed=False)
+            return ExitIPClaimResult(cooldown=cooldown, claimed=False, cooldown_enabled=enabled)
 
         cooldown.client = client
         cooldown.job = job
@@ -209,4 +254,4 @@ def claim_exit_ip(
             fraud_score=fraud_score,
             tested_at=claimed_at,
         )
-        return ExitIPClaimResult(cooldown=cooldown, claimed=True)
+        return ExitIPClaimResult(cooldown=cooldown, claimed=True, cooldown_enabled=enabled)
